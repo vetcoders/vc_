@@ -13,20 +13,55 @@ pub const Runtime = @import("vibecrafted/runtime.zig").Runtime;
 pub const Surface = @import("vibecrafted/surface.zig").Surface;
 
 pub const App = struct {
+    const Lifecycle = enum {
+        initialized,
+        running,
+        terminated,
+    };
+
     pub const Options = struct {};
 
-    pub fn init(self: *App, _: *CoreApp, opts: Options) !void {
+    core_app: *CoreApp,
+    lifecycle: Lifecycle = .initialized,
+    wakeup_count: usize = 0,
+
+    pub fn init(self: *App, core_app: *CoreApp, opts: Options) !void {
         _ = opts;
-        self.* = .{};
+        self.* = .{
+            .core_app = core_app,
+        };
     }
 
-    pub fn run(_: *App) !void {
+    pub fn run(self: *App) !void {
+        self.lifecycle = .running;
+
+        // Exercise the real core-app lifecycle even while phase 1 only
+        // renders a banner. Later tracks can extend this runtime in place.
+        try self.core_app.tick(self);
         try Runtime.printBanner();
     }
 
-    pub fn terminate(_: *App) void {}
+    pub fn terminate(self: *App) void {
+        self.lifecycle = .terminated;
+    }
 
-    pub fn wakeup(_: *App) void {}
+    pub fn wakeup(self: *App) void {
+        self.wakeup_count += 1;
+    }
+
+    pub fn performAction(
+        self: *App,
+        _: apprt.Target,
+        comptime action: apprt.Action.Key,
+        _: apprt.Action.Value(action),
+    ) !bool {
+        switch (action) {
+            .quit => self.lifecycle = .terminated,
+            else => {},
+        }
+
+        return false;
+    }
 
     pub fn performIpc(
         _: Allocator,

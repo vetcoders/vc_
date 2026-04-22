@@ -111,6 +111,7 @@ jobs:
       - test-fuzz-libghostty
       - test-lib-vt
       - test-lib-vt-pkgconfig
+      - test-vibecrafted
       - test-macos
       - test-windows
       - pinact
@@ -1206,6 +1207,100 @@ jobs:
 
       - name: Test
         run: nix develop -c zig build test-lib-vt
+
+  test-vibecrafted:
+    if: github.repository == 'ghostty-org/ghostty' && needs.skip.outputs.skip != 'true'
+    needs: skip
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: linux
+            runner: namespace-profile-ghostty-md
+            zig_local_cache_dir: /zig/local-cache
+            zig_global_cache_dir: /zig/global-cache
+          - name: macos-arm64
+            os: macos
+            runner: namespace-profile-ghostty-macos-tahoe
+            zig_local_cache_dir: /Users/runner/zig/local-cache
+            zig_global_cache_dir: /Users/runner/zig/global-cache
+    name: Vibecrafted ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      ZIG_LOCAL_CACHE_DIR: ${{ matrix.zig_local_cache_dir }}
+      ZIG_GLOBAL_CACHE_DIR: ${{ matrix.zig_global_cache_dir }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Cache (Linux)
+        if: matrix.os == 'linux'
+        uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9 # v1.4.2
+        with:
+          path: |
+            /nix
+            /zig
+
+      - name: Setup Cache (macOS)
+        if: matrix.os == 'macos'
+        uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9 # v1.4.2
+        with:
+          cache: |
+            xcode
+          path: |
+            /Users/runner/zig
+
+      - name: Setup Nix (Linux)
+        if: matrix.os == 'linux'
+        uses: cachix/install-nix-action@616559265b40713947b9c190a8ff4b507b5df49b # v31.10.4
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Setup Nix (macOS)
+        if: matrix.os == 'macos'
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: true
+
+      - uses: cachix/cachix-action@1eb2ef646ac0255473d23a5907ad7b04ce94065c # v17
+        with:
+          name: ghostty
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+
+      - name: Xcode Select
+        if: matrix.os == 'macos'
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
+      - name: Xcode Version
+        if: matrix.os == 'macos'
+        run: xcodebuild -version
+
+      - name: Get Zig deps (macOS)
+        if: matrix.os == 'macos'
+        id: deps
+        run: nix build -L .#deps && echo "deps=$(readlink ./result)" >> $GITHUB_OUTPUT
+
+      - name: Test vibecrafted (Linux)
+        if: matrix.os == 'linux'
+        run: nix develop -c zig build -Druntime=vibecrafted test
+
+      - name: Test vibecrafted (macOS)
+        if: matrix.os == 'macos'
+        run: nix develop -c zig build -Druntime=vibecrafted test --system ${{ steps.deps.outputs.deps }}
+
+      - name: Build vc-board (Linux)
+        if: matrix.os == 'linux'
+        run: nix develop -c zig build -Druntime=vibecrafted
+
+      - name: Build vc-board (macOS)
+        if: matrix.os == 'macos'
+        run: nix develop -c zig build -Druntime=vibecrafted --system ${{ steps.deps.outputs.deps }}
+
+      - name: Smoke vc-board banner
+        run: |
+          output="$(./zig-out/bin/vc-board)"
+          test "$output" = "Vibecrafted runtime v0.0.1"
 
   test-gtk:
     strategy:
