@@ -33,7 +33,9 @@ Use `apprt.vibecrafted` as the single import surface for board layout policy:
 
 - `Panels` for split-tree mutations
 - `Controller` for surface-kind metadata plus input routing
-- `Workspace` for named tabs and marbles run isolation
+- `Workspace` for pure named-tab layout bookkeeping
+- `WorkspaceController` for named tabs plus kind-aware panel routing
+- `SpawnedPanel` for marbles/tab spawns that carry `InputTarget`
 - `marblesTabEnvVar` / `marblesTabNameAlloc` / `marblesPaneNameAlloc` for
   marbles orchestration
 - `matchBoardKey` / `isReservedBoardKey` for board-local chords

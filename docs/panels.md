@@ -20,9 +20,10 @@ The stable import surface for downstream tracks is now
 `src/apprt/vibecrafted.zig`. T3/T4 should import from `apprt.vibecrafted`
 rather than reaching into private file paths.
 
-The runtime-facing orchestration layer now also includes a tab/workspace model
-inside `src/apprt/vibecrafted/panels.zig`, which adds named tabs on top of the
-existing panel tree without coupling T2 to GTK.
+The runtime-facing orchestration layer now also includes a tab-aware
+`WorkspaceController` inside `src/apprt/vibecrafted/controller.zig`. It keeps
+the existing named-tab marbles contract, but now each tab also owns
+surface-kind metadata and key routing state instead of only a raw panel tree.
 
 The backing store is Ghostty's immutable
 `src/datastruct/split_tree.zig`. Every layout mutation returns a new tree, then
@@ -48,9 +49,16 @@ The backing store is Ghostty's immutable
 - `Workspace`
   - owns named tabs
   - each tab owns one `Panels` tree
+- `WorkspaceController`
+  - owns named tabs for runtime orchestration
+  - each tab owns one `Controller`
 - `Tab`
   - stable `id`
   - stable `name`
+- `TabController`
+  - stable `id`
+  - stable `name`
+  - wraps one `Controller`
 - `InputTarget`
   - `(panel_id, kind)` pair used by runtime glue
 
@@ -133,21 +141,33 @@ results:
 
 This keeps T2's policy testable without forcing T1/T3/T4 to share UI code.
 
+`WorkspaceController` lifts the same policy to the tab layer:
+
+- `spawnMarblesPanel(run_id, loop_nr, direction, kind, inherited_tab_name)`
+  preserves the marbles tab contract and stores the requested `SurfaceKind`
+- `routeKeyEvent(event)` routes board-local bindings inside the active tab and
+  forwards everything else to the active `InputTarget`
+- `activeInputTarget()` exposes the currently focused `(panel_id, kind)` pair
+  for runtime glue
+
 ## Marbles Tab Contract
 
-`Workspace` is where the marbles isolation contract now lives:
+The naming contract still lives in the pure panel helpers, but the runtime
+entrypoint is now `WorkspaceController`:
 
-- `Workspace.marblesTab(run_id)`
+- `WorkspaceController.marblesTab(run_id)`
   - resolves `marbles-<run_id>`
   - reuses the existing tab if it already exists
-- `Workspace.marblesTabInherited(run_id, inherited_tab_name)`
+- `WorkspaceController.marblesTabInherited(run_id, inherited_tab_name)`
   - ignores mismatched inherited env values so a bad caller cannot cross-wire
     two runs into one tab
-- `Workspace.spawnMarblesPanel(run_id, loop_nr, ...)`
+- `WorkspaceController.spawnMarblesPanel(run_id, loop_nr, ...)`
   - L1 pane name: `<run_id>`
   - L2+ pane name: `<run_id>-<loop_nr>`
   - all loops for one `run_id` stay inside the same tab
   - different `run_id` values always land in different tabs
+  - returned `SpawnedPanel` also carries the `InputTarget` so downstream code
+    can keep PTY vs custom-TUI routing straight
 
 The env seam is exported as `apprt.vibecrafted.MarblesTabNameEnvVar`
 (`VIBECRAFTED_MARBLES_TAB_NAME`) so T4 can inherit the tab identity directly.
@@ -157,8 +177,8 @@ The env seam is exported as `apprt.vibecrafted.MarblesTabNameEnvVar`
 Consumers should use the re-exported symbols from `apprt.vibecrafted`:
 
 - `Panels`, `PanelId`, `SplitDirection`, `FocusDirection`, `CloseResult`
-- `Controller`, `SurfaceKind`, `InputTarget`, `RouteResult`
-- `Workspace`, `Tab`
+- `Controller`, `WorkspaceController`, `SurfaceKind`, `InputTarget`, `RouteResult`
+- `Workspace`, `Tab`, `TabController`, `SpawnedPanel`
 - `MarblesTabNameEnvVar`, `marblesTabName`, `marblesPaneName`
 - `KeyAction`, `matchBoardKey`, `isReservedBoardKey`
 

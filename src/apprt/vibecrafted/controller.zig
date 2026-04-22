@@ -6,6 +6,7 @@ const keymap = @import("keymap.zig");
 const panels_mod = @import("panels.zig");
 
 pub const PanelId = panels_mod.PanelId;
+pub const TabId = panels_mod.TabId;
 pub const Panels = panels_mod.Panels;
 pub const Panel = panels_mod.Panel;
 pub const SplitDirection = panels_mod.SplitDirection;
@@ -48,6 +49,207 @@ pub const RouteResult = union(enum) {
     focus: FocusOutcome,
     close: CloseOutcome,
     forwarded: InputTarget,
+};
+
+pub const TabController = struct {
+    id: TabId,
+    name: []const u8,
+    controller: Controller,
+
+    fn init(allocator: Allocator, id: TabId, name: []const u8) !*TabController {
+        const tab = try allocator.create(TabController);
+        errdefer allocator.destroy(tab);
+
+        tab.* = .{
+            .id = id,
+            .name = try allocator.dupe(u8, name),
+            .controller = Controller.init(allocator),
+        };
+        return tab;
+    }
+
+    fn deinit(self: *TabController, allocator: Allocator) void {
+        self.controller.deinit();
+        allocator.free(self.name);
+        allocator.destroy(self);
+    }
+
+    pub fn activePanelName(self: *const TabController) ?[]const u8 {
+        return self.controller.panels.activePanelName();
+    }
+
+    pub fn activePaneName(self: *const TabController) ?[]const u8 {
+        return self.activePanelName();
+    }
+
+    pub fn activeInputTarget(self: *const TabController) ?InputTarget {
+        return self.controller.activeInputTarget();
+    }
+};
+
+pub const WorkspaceController = struct {
+    const Self = @This();
+
+    pub const SpawnedMarblesPanel = struct {
+        tab_id: TabId,
+        tab_name: []const u8,
+        panel_id: PanelId,
+        pane_name: []const u8,
+        target: InputTarget,
+    };
+
+    pub const ValidateError = Controller.ValidateError || error{
+        ActiveOnEmptyWorkspace,
+        MissingActiveTab,
+        DuplicateTabId,
+        DuplicateTabName,
+        ActiveMissingFromWorkspace,
+        NextTabIdRegressed,
+    };
+
+    allocator: Allocator,
+    tabs: std.ArrayListUnmanaged(*TabController) = .{},
+    active_tab_id: ?TabId = null,
+    next_tab_id: TabId = 1,
+
+    pub fn init(allocator: Allocator) Self {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *Self) void {
+        for (self.tabs.items) |workspace_tab| workspace_tab.deinit(self.allocator);
+        self.tabs.deinit(self.allocator);
+        self.* = undefined;
+    }
+
+    pub fn tabCount(self: *const Self) usize {
+        return self.tabs.items.len;
+    }
+
+    pub fn activeTab(self: *const Self) ?*TabController {
+        const id = self.active_tab_id orelse return null;
+        return self.tab(id);
+    }
+
+    pub fn activeInputTarget(self: *const Self) ?InputTarget {
+        const tab = self.activeTab() orelse return null;
+        return tab.activeInputTarget();
+    }
+
+    pub fn tab(self: *const Self, id: TabId) ?*TabController {
+        for (self.tabs.items) |workspace_tab| {
+            if (workspace_tab.id == id) return workspace_tab;
+        }
+        return null;
+    }
+
+    pub fn findTabByName(self: *const Self, name: []const u8) ?*TabController {
+        for (self.tabs.items) |workspace_tab| {
+            if (std.mem.eql(u8, workspace_tab.name, name)) return workspace_tab;
+        }
+        return null;
+    }
+
+    pub fn activateTab(self: *Self, id: TabId) error{UnknownTab}!void {
+        if (self.tab(id) == null) return error.UnknownTab;
+        self.active_tab_id = id;
+    }
+
+    pub fn findOrCreateTab(self: *Self, name: []const u8) !*TabController {
+        if (self.findTabByName(name)) |existing| {
+            self.active_tab_id = existing.id;
+            return existing;
+        }
+
+        const id = self.next_tab_id;
+        errdefer self.next_tab_id = id;
+        self.next_tab_id += 1;
+
+        const workspace_tab = try TabController.init(self.allocator, id, name);
+        errdefer workspace_tab.deinit(self.allocator);
+
+        try self.tabs.append(self.allocator, workspace_tab);
+        self.active_tab_id = workspace_tab.id;
+        return workspace_tab;
+    }
+
+    pub fn marblesTab(self: *Self, run_id: []const u8) !*TabController {
+        return self.marblesTabInherited(run_id, null);
+    }
+
+    pub fn marblesTabInherited(
+        self: *Self,
+        run_id: []const u8,
+        inherited_tab_name: ?[]const u8,
+    ) !*TabController {
+        const tab_name = try panels_mod.marblesTabName(
+            self.allocator,
+            run_id,
+            inherited_tab_name,
+        );
+        defer self.allocator.free(tab_name);
+        return self.findOrCreateTab(tab_name);
+    }
+
+    pub fn spawnMarblesPanel(
+        self: *Self,
+        run_id: []const u8,
+        loop_nr: usize,
+        direction: SplitDirection,
+        kind: SurfaceKind,
+        inherited_tab_name: ?[]const u8,
+    ) !SpawnedMarblesPanel {
+        const workspace_tab = try self.marblesTabInherited(run_id, inherited_tab_name);
+        const pane_name = try panels_mod.marblesPaneName(self.allocator, run_id, loop_nr);
+        defer self.allocator.free(pane_name);
+
+        const target = if (workspace_tab.controller.isEmpty())
+            try workspace_tab.controller.createInitialNamed(kind, pane_name)
+        else
+            (try workspace_tab.controller.splitActiveNamed(direction, kind, pane_name)).new_panel;
+
+        return .{
+            .tab_id = workspace_tab.id,
+            .tab_name = workspace_tab.name,
+            .panel_id = target.panel_id,
+            .pane_name = workspace_tab.controller.panel(target.panel_id).?.name(),
+            .target = target,
+        };
+    }
+
+    pub fn routeKeyEvent(self: *Self, event: input.KeyEvent) !RouteResult {
+        const workspace_tab = self.activeTab() orelse return .none;
+        return workspace_tab.controller.routeKeyEvent(event);
+    }
+
+    pub fn validate(self: *const Self) ValidateError!void {
+        if (self.tabs.items.len == 0) {
+            if (self.active_tab_id != null) return error.ActiveOnEmptyWorkspace;
+            return;
+        }
+
+        const active_tab_id = self.active_tab_id orelse return error.MissingActiveTab;
+        var found_active = false;
+        var max_id: TabId = 0;
+
+        for (self.tabs.items) |workspace_tab| {
+            if (workspace_tab.id == active_tab_id) found_active = true;
+            max_id = @max(max_id, workspace_tab.id);
+            try workspace_tab.controller.validate();
+
+            var duplicate_ids: usize = 0;
+            var duplicate_names: usize = 0;
+            for (self.tabs.items) |other_tab| {
+                if (other_tab.id == workspace_tab.id) duplicate_ids += 1;
+                if (std.mem.eql(u8, other_tab.name, workspace_tab.name)) duplicate_names += 1;
+            }
+            if (duplicate_ids != 1) return error.DuplicateTabId;
+            if (duplicate_names != 1) return error.DuplicateTabName;
+        }
+
+        if (!found_active) return error.ActiveMissingFromWorkspace;
+        if (max_id >= self.next_tab_id) return error.NextTabIdRegressed;
+    }
 };
 
 pub const Controller = struct {
@@ -348,4 +550,116 @@ test "panels controller reserves panel bindings and mutates layout" {
         close_result,
     );
     try controller.validate();
+}
+
+test "workspace controller keeps marbles tabs isolated and preserves surface kinds" {
+    const testing = std.testing;
+
+    var workspace = WorkspaceController.init(testing.allocator);
+    defer workspace.deinit();
+
+    const first = try workspace.spawnMarblesPanel(
+        "marb-175510-002",
+        1,
+        .horizontal,
+        .pty,
+        null,
+    );
+    const second = try workspace.spawnMarblesPanel(
+        "marb-175510-002",
+        2,
+        .vertical,
+        .custom_tui,
+        "marbles-some-other-run",
+    );
+    const third = try workspace.spawnMarblesPanel(
+        "marb-175510-003",
+        1,
+        .horizontal,
+        .pty,
+        null,
+    );
+
+    try testing.expectEqual(@as(usize, 2), workspace.tabCount());
+    try testing.expectEqual(first.tab_id, second.tab_id);
+    try testing.expect(first.tab_id != third.tab_id);
+    try testing.expectEqualStrings("marbles-marb-175510-002", first.tab_name);
+    try testing.expectEqualStrings("marb-175510-002", first.pane_name);
+    try testing.expectEqualStrings("marb-175510-002-2", second.pane_name);
+    try testing.expectEqual(InputTarget{ .panel_id = first.panel_id, .kind = .pty }, first.target);
+    try testing.expectEqual(
+        InputTarget{ .panel_id = second.panel_id, .kind = .custom_tui },
+        second.target,
+    );
+    try testing.expectEqual(second.target, workspace.activeInputTarget().?);
+    try workspace.validate();
+}
+
+test "workspace controller routes keys within the active tab" {
+    const testing = std.testing;
+
+    var workspace = WorkspaceController.init(testing.allocator);
+    defer workspace.deinit();
+
+    const first = try workspace.spawnMarblesPanel(
+        "marb-175510-002",
+        1,
+        .horizontal,
+        .pty,
+        null,
+    );
+    const second = try workspace.spawnMarblesPanel(
+        "marb-175510-002",
+        2,
+        .horizontal,
+        .custom_tui,
+        "marbles-marb-175510-002",
+    );
+    _ = try workspace.spawnMarblesPanel(
+        "marb-175510-003",
+        1,
+        .horizontal,
+        .pty,
+        null,
+    );
+
+    try workspace.activateTab(first.tab_id);
+    try testing.expectEqual(second.target, workspace.activeInputTarget().?);
+
+    const forwarded = try workspace.routeKeyEvent(.{
+        .key = .key_a,
+        .unshifted_codepoint = 'a',
+    });
+    try testing.expectEqual(RouteResult{ .forwarded = second.target }, forwarded);
+
+    const focus = try workspace.routeKeyEvent(.{
+        .key = .arrow_left,
+        .mods = .{ .ctrl = true, .shift = true },
+    });
+    try testing.expectEqual(
+        RouteResult{
+            .focus = .{
+                .direction = .left,
+                .target = first.target,
+            },
+        },
+        focus,
+    );
+
+    const close = try workspace.routeKeyEvent(.{
+        .key = .key_w,
+        .mods = .{ .ctrl = true, .shift = true },
+    });
+    try testing.expectEqual(
+        RouteResult{
+            .close = .{
+                .closed = .{
+                    .panel_id = first.panel_id,
+                    .next_focus = second.target,
+                },
+            },
+        },
+        close,
+    );
+    try workspace.validate();
 }
