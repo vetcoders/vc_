@@ -285,7 +285,7 @@ pub fn generateRunId(alloc: Allocator, prefix: []const u8, now_seconds: i64) ![]
     return std.fmt.allocPrint(alloc, "{s}-{s}-{d}", .{
         prefix,
         clock_stamp,
-        std.posix.getpid(),
+        @as(std.posix.pid_t, @intCast(std.c.getpid())),
     });
 }
 

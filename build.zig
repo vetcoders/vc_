@@ -283,14 +283,14 @@ pub fn build(b: *std.Build) !void {
         stage_app.cwd = b.path("");
         stage_app.addArgs(&.{
             "sh",
-            "-c",
-            "set -e; mkdir -p \"$1\"; rm -rf \"$1/$2\"; cp -R \"$3\" \"$1/$2\"",
-            "--",
+            b.pathFromRoot("distribution/macos/stage-vc-board-app.sh"),
             b.install_path,
-            "vc-board.app",
             b.pathFromRoot(b.fmt("macos/build/{s}/Ghostty.app", .{vc_board_xc_config})),
+            b.getInstallPath(.bin, "vc-board"),
+            file_version orelse app_zon_version,
         });
         stage_app.step.dependOn(&build_app.step);
+        stage_app.step.dependOn(b.getInstallStep());
 
         step.dependOn(&stage_app.step);
     }

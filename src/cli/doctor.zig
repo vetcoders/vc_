@@ -839,3 +839,45 @@ test "detect layout treats portable bin/share install as portable bundle" {
     try std.testing.expect(layout.skills_dir != null);
     try std.testing.expect(layout.bundled_config_path != null);
 }
+
+test "detect layout treats macos app bundle as macos_app bundle" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("vc-board.app/Contents/MacOS");
+    try tmp.dir.makePath("vc-board.app/Contents/Resources/bin");
+    try tmp.dir.makePath("vc-board.app/Contents/Resources/skills");
+    try tmp.dir.makePath("vc-board.app/Contents/Resources/config");
+    try tmp.dir.writeFile(.{
+        .sub_path = "vc-board.app/Contents/MacOS/vc-board",
+        .data = "",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "vc-board.app/Contents/Info.plist",
+        .data =
+        \\<?xml version="1.0" encoding="UTF-8"?>
+        \\<plist version="1.0">
+        \\<dict>
+        \\  <key>CFBundleIdentifier</key>
+        \\  <string>com.vibecrafted.vc-board</string>
+        \\</dict>
+        \\</plist>
+        ,
+    });
+
+    const exe_path = try tmp.dir.realpathAlloc(
+        std.testing.allocator,
+        "vc-board.app/Contents/MacOS/vc-board",
+    );
+    defer std.testing.allocator.free(exe_path);
+
+    const layout = try detectLayoutForExePath(std.testing.allocator, exe_path);
+    defer layout.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.macos_app, layout.kind);
+    try std.testing.expect(layout.root_dir != null);
+    try std.testing.expect(layout.helpers_dir != null);
+    try std.testing.expect(layout.skills_dir != null);
+    try std.testing.expect(layout.bundled_config_path != null);
+    try std.testing.expect(layout.plist_path != null);
+}
