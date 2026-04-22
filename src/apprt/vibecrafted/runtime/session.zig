@@ -282,7 +282,11 @@ pub fn resolveLayout(alloc: Allocator, opts: LayoutOptions) !Layout {
 pub fn generateRunId(alloc: Allocator, prefix: []const u8, now_seconds: i64) ![]const u8 {
     const clock_stamp = try formatClockStamp(alloc, now_seconds);
     defer alloc.free(clock_stamp);
-    return std.fmt.allocPrint(alloc, "{s}-{s}", .{ prefix, clock_stamp });
+    return std.fmt.allocPrint(alloc, "{s}-{s}-{d}", .{
+        prefix,
+        clock_stamp,
+        std.posix.getpid(),
+    });
 }
 
 pub fn buildRunPaths(
@@ -410,7 +414,11 @@ pub fn sweepDeadRuns(alloc: Allocator, layout: *const Layout) !SweepResult {
 
         result.scanned += 1;
         if (!meta.status.isLive()) continue;
-        const pid = meta.launcher_pid orelse continue;
+        const pid = meta.launcher_pid orelse {
+            try meta.reapGhost("launcher_pid missing for live run", layout.now_seconds);
+            result.reaped += 1;
+            continue;
+        };
         if (pidAlive(pid)) continue;
 
         try meta.reapGhost("launcher_pid dead at reap", layout.now_seconds);
@@ -607,11 +615,14 @@ fn formatFileStamp(alloc: Allocator, now_seconds: i64) ![]const u8 {
     return std.fmt.allocPrint(alloc, "{s}_{s}", .{ compact_day[0..write_index], clock_stamp[0..4] });
 }
 
-test "generateRunId keeps the legacy prefix-hhmmss contract" {
+test "generateRunId keeps the legacy prefix-hhmmss-pid contract" {
     const run_id = try generateRunId(std.testing.allocator, "init", 1710883557);
     defer std.testing.allocator.free(run_id);
 
-    try std.testing.expectEqualStrings("init-212557", run_id);
+    try std.testing.expect(std.mem.startsWith(u8, run_id, "init-212557-"));
+    const pid_suffix = run_id["init-212557-".len..];
+    try std.testing.expect(pid_suffix.len > 0);
+    for (pid_suffix) |ch| try std.testing.expect(std.ascii.isDigit(ch));
 }
 
 test "createRunMeta writes meta and lock files" {
@@ -634,9 +645,12 @@ test "createRunMeta writes meta and lock files" {
     });
     defer layout.deinit();
 
+    const run_id = try generateRunId(testing.allocator, "init", 1710883557);
+    defer testing.allocator.free(run_id);
+
     var meta = try createRunMeta(testing.allocator, .{
         .layout = &layout,
-        .run_id = "init-212557",
+        .run_id = run_id,
         .agent = "claude",
         .skill_name = "init",
         .skill_code = "init",
@@ -652,7 +666,7 @@ test "createRunMeta writes meta and lock files" {
     defer loaded.deinit();
 
     try testing.expectEqual(Status.launching, loaded.status);
-    try testing.expectEqualStrings("init-212557", loaded.run_id);
+    try std.testing.expect(std.mem.startsWith(u8, loaded.run_id, "init-212557-"));
     try testing.expectEqualStrings(meta.lock_path, loaded.lock_path);
 }
 
@@ -676,9 +690,12 @@ test "sweepDeadRuns flips stale launchers to ghost and releases locks" {
     });
     defer layout.deinit();
 
+    const run_id = try generateRunId(testing.allocator, "init", 1710883557);
+    defer testing.allocator.free(run_id);
+
     var meta = try createRunMeta(testing.allocator, .{
         .layout = &layout,
-        .run_id = "init-212557",
+        .run_id = run_id,
         .agent = "claude",
         .skill_name = "init",
         .skill_code = "init",
@@ -699,5 +716,54 @@ test "sweepDeadRuns flips stale launchers to ghost and releases locks" {
 
     try testing.expectEqual(Status.ghost, loaded.status);
     try testing.expect(loaded.ghost_reason != null);
+    try testing.expect(!pathExists(meta.lock_path));
+}
+
+test "sweepDeadRuns reaps live runs that never recorded launcher_pid" {
+    const testing = std.testing;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const root_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(root_path);
+
+    const home_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(home_path);
+
+    var layout = try resolveLayout(testing.allocator, .{
+        .root = root_path,
+        .now_seconds = 1710883557,
+        .vibecrafted_home_override = home_path,
+        .project_slug_override = "vet/sample",
+    });
+    defer layout.deinit();
+
+    const run_id = try generateRunId(testing.allocator, "init", 1710883557);
+    defer testing.allocator.free(run_id);
+
+    var meta = try createRunMeta(testing.allocator, .{
+        .layout = &layout,
+        .run_id = run_id,
+        .agent = "claude",
+        .skill_name = "init",
+        .skill_code = "init",
+        .mode = "headless",
+        .root = root_path,
+    });
+    defer meta.deinit();
+
+    meta.status = .running;
+    meta.launcher_pid = null;
+    try meta.save();
+
+    const sweep = try sweepDeadRuns(testing.allocator, &layout);
+    try testing.expectEqual(@as(usize, 1), sweep.reaped);
+
+    var loaded = try loadMetaAbsolute(testing.allocator, meta.meta_path);
+    defer loaded.deinit();
+
+    try testing.expectEqual(Status.ghost, loaded.status);
+    try testing.expectEqualStrings("launcher_pid missing for live run", loaded.ghost_reason.?);
     try testing.expect(!pathExists(meta.lock_path));
 }
