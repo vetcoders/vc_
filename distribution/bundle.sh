@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$ROOT_DIR/distribution/lib.sh"
 LAYOUT=""
 OUTPUT_DIR=""
 APP_SOURCE=""
@@ -268,6 +269,30 @@ write_macos_plist() {
 EOF
 }
 
+rewrite_macos_plist() {
+  local plist_path="$1"
+
+  if [[ -f "$plist_path" ]] && command -v /usr/libexec/PlistBuddy >/dev/null 2>&1; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable vc-board" "$plist_path" 2>/dev/null || \
+      /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string vc-board" "$plist_path"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.vibecrafted.vc-board" "$plist_path" 2>/dev/null || \
+      /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.vibecrafted.vc-board" "$plist_path"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleName vc-board" "$plist_path" 2>/dev/null || \
+      /usr/libexec/PlistBuddy -c "Add :CFBundleName string vc-board" "$plist_path"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName vc-board" "$plist_path" 2>/dev/null || \
+      /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string vc-board" "$plist_path"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "$plist_path" 2>/dev/null || \
+      /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string ${VERSION}" "$plist_path"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION}" "$plist_path" 2>/dev/null || \
+      /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${VERSION}" "$plist_path"
+    /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 13.0" "$plist_path" 2>/dev/null || \
+      /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 13.0" "$plist_path"
+    return 0
+  fi
+
+  write_macos_plist "$plist_path"
+}
+
 bundle_macos() {
   local app_bundle="$OUTPUT_DIR/vc-board.app"
   rm -rf "$app_bundle"
@@ -276,10 +301,15 @@ bundle_macos() {
     cp -R "$APP_SOURCE" "$app_bundle"
   else
     mkdir -p "$app_bundle/Contents/MacOS" "$app_bundle/Contents/Resources"
-    cp "$BINARY_SOURCE" "$app_bundle/Contents/MacOS/vc-board"
-    chmod +x "$app_bundle/Contents/MacOS/vc-board"
-    write_macos_plist "$app_bundle/Contents/Info.plist"
   fi
+
+  mkdir -p "$app_bundle/Contents/MacOS" "$app_bundle/Contents/Resources"
+  cp "$BINARY_SOURCE" "$app_bundle/Contents/MacOS/vc-board"
+  chmod +x "$app_bundle/Contents/MacOS/vc-board"
+  rm -f \
+    "$app_bundle/Contents/MacOS/ghostty" \
+    "$app_bundle/Contents/MacOS/Ghostty"
+  rewrite_macos_plist "$app_bundle/Contents/Info.plist"
 
   mkdir -p "$app_bundle/Contents/Resources/bin"
   copy_helpers "$app_bundle/Contents/Resources/bin"

@@ -2,8 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$ROOT_DIR/distribution/lib.sh"
 ARTIFACT_DIR="${ARTIFACT_DIR:-$ROOT_DIR/zig-out/dist}"
-ARCH="${ARCH:-$(uname -m)}"
+ARCH="$(normalize_arch "${ARCH:-$(uname -m)}")"
 VERSION="${VC_BOARD_VERSION:-dev}"
 STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vc-board-linux.XXXXXX")"
 VC_BOARD_BINARY="${VC_BOARD_BINARY:-$ROOT_DIR/zig-out/bin/vc-board}"
@@ -30,8 +31,14 @@ ensure_binary
   --version "$VERSION"
 
 ARTIFACT_BASENAME="vc-board-linux-${ARCH}"
-tar -C "$STAGE_DIR" -czf "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.tar.gz" vc-board
-shasum -a 256 "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.tar.gz" >"$ARTIFACT_DIR/${ARTIFACT_BASENAME}.tar.gz.sha256"
+if tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner -C "$STAGE_DIR" -czf "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.tar.gz" vc-board >/dev/null 2>&1; then
+  :
+else
+  tar -C "$STAGE_DIR" -czf "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.tar.gz" vc-board
+fi
+write_sha256_file \
+  "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.tar.gz" \
+  "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.tar.gz.sha256"
 
 cat <<EOF
 Created:

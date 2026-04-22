@@ -2,8 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$ROOT_DIR/distribution/lib.sh"
 ARTIFACT_DIR="${ARTIFACT_DIR:-$ROOT_DIR/zig-out/dist}"
-ARCH="${ARCH:-$(uname -m)}"
+ARCH="$(normalize_arch "${ARCH:-$(uname -m)}")"
 VERSION="${VC_BOARD_VERSION:-dev}"
 APP_SOURCE="${APP_SOURCE:-}"
 VC_BOARD_BINARY="${VC_BOARD_BINARY:-$ROOT_DIR/zig-out/bin/vc-board}"
@@ -62,7 +63,9 @@ hdiutil create \
   -ov \
   -format UDZO \
   "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.dmg"
-shasum -a 256 "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.dmg" >"$ARTIFACT_DIR/${ARTIFACT_BASENAME}.dmg.sha256"
+write_sha256_file \
+  "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.dmg" \
+  "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.dmg.sha256"
 
 cat <<EOF
 Created:

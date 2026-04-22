@@ -1,0 +1,267 @@
+name: vc-board Release
+
+on:
+  push:
+    tags:
+      - "vc-board-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without prefix, for example 0.1.0"
+        required: true
+      notarize_macos:
+        description: "Attempt macOS notarization when secrets are available"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: vc-board-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+    steps:
+      - id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+            version="${tag#vc-board-v}"
+          else
+            version="${{ github.event.inputs.version }}"
+            tag="vc-board-v${version}"
+          fi
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version: $version" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "release_tag=$tag" >>"$GITHUB_OUTPUT"
+
+  build-linux:
+    needs: setup
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    env:
+      VC_BOARD_VERSION: ${{ needs.setup.outputs.version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Bootstrap Zig
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="0.15.2"
+          os="linux"
+          case "$(uname -m)" in
+            x86_64|amd64) arch="x86_64" ;;
+            arm64|aarch64) arch="aarch64" ;;
+            *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://ziglang.org/download/${version}/zig-${os}-${arch}-${version}.tar.xz" -o zig.tar.xz
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-${os}-${arch}-${version}" >>"$GITHUB_PATH"
+
+      - name: Checkout helper sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: Loctree/aicx
+          path: helpers/aicx
+
+      - name: Checkout prview
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: Loctree/prview
+          path: helpers/prview
+
+      - name: Checkout rust-mux
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: Loctree/rust-mux
+          path: helpers/rust-mux
+
+      - name: Checkout loctree
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: Loctree/loctree
+          path: helpers/loctree
+
+      - name: Build helper binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p helper-bin
+          cargo build --manifest-path helpers/aicx/Cargo.toml --release --bin aicx
+          cargo build --manifest-path helpers/prview/Cargo.toml --release --bin prview
+          cargo build --manifest-path helpers/rust-mux/Cargo.toml --release --bin rust-mux
+          cargo build --manifest-path helpers/loctree/Cargo.toml --release --bin loctree
+          cp helpers/aicx/target/release/aicx helper-bin/aicx
+          cp helpers/prview/target/release/prview helper-bin/prview
+          cp helpers/rust-mux/target/release/rust-mux helper-bin/rust-mux
+          cp helpers/loctree/target/release/loctree helper-bin/loctree
+          chmod +x helper-bin/*
+
+      - name: Build Linux tarball
+        shell: bash
+        env:
+          VC_BOARD_AICX_BIN: ${{ github.workspace }}/helper-bin/aicx
+          VC_BOARD_LOCTREE_BIN: ${{ github.workspace }}/helper-bin/loctree
+          VC_BOARD_PRVIEW_BIN: ${{ github.workspace }}/helper-bin/prview
+          VC_BOARD_RUST_MUX_BIN: ${{ github.workspace }}/helper-bin/rust-mux
+        run: |
+          set -euo pipefail
+          zig build -Druntime=vibecrafted
+          ./distribution/linux/build-tarball.sh
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vc-board-linux-${{ matrix.arch }}
+          path: |
+            zig-out/dist/vc-board-linux-${{ matrix.arch }}.tar.gz
+            zig-out/dist/vc-board-linux-${{ matrix.arch }}.tar.gz.sha256
+
+  build-macos:
+    needs: setup
+    runs-on: macos-14
+    env:
+      VC_BOARD_VERSION: ${{ needs.setup.outputs.version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Bootstrap Zig
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="0.15.2"
+          os="macos"
+          case "$(uname -m)" in
+            arm64|aarch64) arch="aarch64" ;;
+            x86_64|amd64) arch="x86_64" ;;
+            *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://ziglang.org/download/${version}/zig-${os}-${arch}-${version}.tar.xz" -o zig.tar.xz
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-${os}-${arch}-${version}" >>"$GITHUB_PATH"
+
+      - name: Checkout helper sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: Loctree/aicx
+          path: helpers/aicx
+
+      - name: Checkout prview
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: Loctree/prview
+          path: helpers/prview
+
+      - name: Checkout rust-mux
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: Loctree/rust-mux
+          path: helpers/rust-mux
+
+      - name: Checkout loctree
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: Loctree/loctree
+          path: helpers/loctree
+
+      - name: Build helper binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p helper-bin
+          cargo build --manifest-path helpers/aicx/Cargo.toml --release --bin aicx
+          cargo build --manifest-path helpers/prview/Cargo.toml --release --bin prview
+          cargo build --manifest-path helpers/rust-mux/Cargo.toml --release --bin rust-mux
+          cargo build --manifest-path helpers/loctree/Cargo.toml --release --bin loctree
+          cp helpers/aicx/target/release/aicx helper-bin/aicx
+          cp helpers/prview/target/release/prview helper-bin/prview
+          cp helpers/rust-mux/target/release/rust-mux helper-bin/rust-mux
+          cp helpers/loctree/target/release/loctree helper-bin/loctree
+          chmod +x helper-bin/*
+
+      - name: Build macOS DMG
+        shell: bash
+        env:
+          VC_BOARD_AICX_BIN: ${{ github.workspace }}/helper-bin/aicx
+          VC_BOARD_LOCTREE_BIN: ${{ github.workspace }}/helper-bin/loctree
+          VC_BOARD_PRVIEW_BIN: ${{ github.workspace }}/helper-bin/prview
+          VC_BOARD_RUST_MUX_BIN: ${{ github.workspace }}/helper-bin/rust-mux
+        run: |
+          set -euo pipefail
+          zig build -Druntime=vibecrafted -Demit-macos-app=false
+          ./distribution/macos/build-dmg.sh
+
+      - name: Notarize DMG
+        if: github.event_name == 'push' || github.event.inputs.notarize_macos == 'true'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${APPLE_ID:-}" || -z "${APPLE_TEAM_ID:-}" || -z "${APPLE_APP_PASSWORD:-}" ]]; then
+            echo "Skipping notarization because required secrets are not configured."
+            exit 0
+          fi
+          ./distribution/macos/notarize.sh "zig-out/dist/vc-board-macos-arm64.dmg"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vc-board-macos-arm64
+          path: |
+            zig-out/dist/vc-board-macos-arm64.dmg
+            zig-out/dist/vc-board-macos-arm64.dmg.sha256
+
+  release:
+    needs:
+      - setup
+      - build-linux
+      - build-macos
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Flatten release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find release-assets -type f -exec cp '{}' dist/ ';'
+          ls -lah dist
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          tag_name: ${{ needs.setup.outputs.release_tag }}
+          name: vc-board v${{ needs.setup.outputs.version }}
+          files: |
+            dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

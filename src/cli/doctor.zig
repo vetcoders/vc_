@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const build_config = @import("../build_config.zig");
@@ -155,6 +156,7 @@ fn collect(alloc: Allocator) !Report {
         const summary = try std.fmt.allocPrint(alloc, "config ready at {s}", .{path});
         defer alloc.free(summary);
         try report.append(.ok, "config", summary, null);
+        try collectConfigWriteStatus(alloc, &report, path);
     }
 
     const layout = try detectLayout(alloc);
@@ -199,10 +201,26 @@ fn collectBundledAssets(
             const helper_path = try std.fs.path.join(alloc, &.{ helpers_dir, helper });
             defer alloc.free(helper_path);
 
-            if (std.fs.accessAbsolute(helper_path, .{})) |_| {
+            if (isExecutableFile(helper_path)) |executable| {
+                if (!executable) {
+                    const summary = try std.fmt.allocPrint(
+                        alloc,
+                        "bundled helper {s} is present but not executable",
+                        .{helper},
+                    );
+                    defer alloc.free(summary);
+                    try report.append(
+                        if (layout.kind == .dev) .warn else .fail,
+                        helper,
+                        summary,
+                        "Repair file permissions or rebuild the release bundle.",
+                    );
+                    continue;
+                }
+
                 const summary = try std.fmt.allocPrint(
                     alloc,
-                    "{s} bundled at {s}",
+                    "{s} bundled and executable at {s}",
                     .{ helper, helper_path },
                 );
                 defer alloc.free(summary);
@@ -282,6 +300,58 @@ fn collectAgentCliStatus(alloc: Allocator, report: *Report) !void {
             );
         }
     }
+}
+
+fn collectConfigWriteStatus(
+    alloc: Allocator,
+    report: *Report,
+    config_path: []const u8,
+) !void {
+    const config_dir = std.fs.path.dirname(config_path) orelse {
+        try report.append(
+            .fail,
+            "config-write",
+            "config path has no writable parent directory",
+            "Repair the config path and rerun `vc-board doctor`.",
+        );
+        return;
+    };
+
+    const probe_name = try std.fmt.allocPrint(
+        alloc,
+        ".vc-board-doctor-write-{d}.tmp",
+        .{std.time.nanoTimestamp()},
+    );
+    defer alloc.free(probe_name);
+
+    const probe_path = try std.fs.path.join(alloc, &.{ config_dir, probe_name });
+    defer alloc.free(probe_path);
+
+    var probe = std.fs.createFileAbsolute(probe_path, .{ .exclusive = true }) catch |err| {
+        const summary = try std.fmt.allocPrint(
+            alloc,
+            "config directory is not writable: {}",
+            .{err},
+        );
+        defer alloc.free(summary);
+        try report.append(
+            .fail,
+            "config-write",
+            summary,
+            "Fix directory permissions for the vc-board config path.",
+        );
+        return;
+    };
+    probe.close();
+    std.fs.deleteFileAbsolute(probe_path) catch {};
+
+    const summary = try std.fmt.allocPrint(
+        alloc,
+        "config directory is writable at {s}",
+        .{config_dir},
+    );
+    defer alloc.free(summary);
+    try report.append(.ok, "config-write", summary, null);
 }
 
 fn detectLayout(alloc: Allocator) !Layout {
@@ -453,6 +523,19 @@ fn printHelp(mode: Mode) !void {
         .{@tagName(mode)},
     );
     try stdout.flush();
+}
+
+fn isExecutableFile(path: []const u8) !bool {
+    var file = try std.fs.openFileAbsolute(path, .{});
+    defer file.close();
+
+    const stat = try file.stat();
+    if (stat.kind != .file) return false;
+
+    return switch (builtin.os.tag) {
+        .windows => true,
+        else => (stat.mode & 0o111) != 0,
+    };
 }
 
 fn findOnPath(alloc: Allocator, name: []const u8) !?[]const u8 {
