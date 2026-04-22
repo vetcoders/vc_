@@ -14,6 +14,16 @@ pub fn main() !void {
     const argv = try std.process.argsAlloc(alloc);
     defer std.process.argsFree(alloc, argv);
 
+    const invoked_as = std.fs.path.basename(argv[0]);
+    if (aliasSkillName(invoked_as)) |skill_name| {
+        var stdout_buffer: [4096]u8 = undefined;
+        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+        const stdout = &stdout_writer.interface;
+        defer stdout.flush() catch {};
+
+        std.process.exit(try vc_dispatch.runSkill(alloc, stdout, skill_name, argv[1..]));
+    }
+
     if (argv.len > 1) {
         const command = argv[1];
         if (std.mem.eql(u8, command, "doctor")) {
@@ -45,6 +55,13 @@ pub fn main() !void {
             try printHelp();
             return;
         }
+
+        var stdout_buffer: [4096]u8 = undefined;
+        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+        const stdout = &stdout_writer.interface;
+        defer stdout.flush() catch {};
+
+        std.process.exit(try vc_dispatch.runSkill(alloc, stdout, command, argv[2..]));
     }
 
     const ensured_config_path = try vc_install.ensureDefaultConfig(alloc);
@@ -72,14 +89,30 @@ fn printHelp() !void {
     var stdout_writer = std.fs.File.stdout().writer(&buffer);
     const stdout = &stdout_writer.interface;
     try stdout.writeAll(
-        \\Usage: vc-board [doctor|status|skills|init] [--json|--md]
+        \\Usage: vc-board [doctor|status|skills|<skill>] [--json|--md]
         \\
         \\Without a subcommand, vc-board launches the runtime.
         \\`doctor` validates the install surface.
         \\`status` prints only warnings and failures.
         \\`skills` scans the runtime skills surface (`list`, `show <name>`).
-        \\`init` runs the first headless runtime dispatch slice (`vc-board init claude`).
+        \\Any other subcommand is treated as a runtime skill (`vc-board init claude`, `vc-board workflow codex`).
+        \\If the binary is invoked through an alias such as `vc-init`, that alias is dispatched as the skill name.
         \\
     );
     try stdout.flush();
+}
+
+fn aliasSkillName(invoked_as: []const u8) ?[]const u8 {
+    if (!std.mem.startsWith(u8, invoked_as, "vc-")) return null;
+    if (std.mem.eql(u8, invoked_as, "vc-board")) return null;
+
+    const suffix = invoked_as["vc-".len..];
+    if (suffix.len == 0) return null;
+    return suffix;
+}
+
+test "aliasSkillName ignores vc-board and resolves vc-init" {
+    try std.testing.expectEqualStrings("init", aliasSkillName("vc-init").?);
+    try std.testing.expect(aliasSkillName("vc-board") == null);
+    try std.testing.expect(aliasSkillName("ghostty") == null);
 }

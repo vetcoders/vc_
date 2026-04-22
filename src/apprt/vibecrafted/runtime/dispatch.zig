@@ -66,15 +66,12 @@ pub const Result = struct {
 pub const Error = error{
     PromptConflict,
     TerminalRuntimeNotImplemented,
-    UnsupportedSkill,
     UnsupportedAgent,
 };
 
-pub fn dispatchInit(alloc: Allocator, req: Request) !Result {
+pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
     if (req.runtime != .headless) return error.TerminalRuntimeNotImplemented;
-    if (req.skill_name.len == 0 or !std.mem.eql(u8, req.skill_name, "init")) {
-        return error.UnsupportedSkill;
-    }
+    if (req.skill_name.len == 0) return error.FileNotFound;
     if (req.prompt_text != null and req.prompt_file != null) return error.PromptConflict;
 
     const now_seconds = req.now_seconds orelse std.time.timestamp();
@@ -89,31 +86,30 @@ pub fn dispatchInit(alloc: Allocator, req: Request) !Result {
 
     const sweep = try session.sweepDeadRuns(alloc, &layout);
 
-    var skill_doc = try loadSkillDocument(alloc, req);
-    defer skill_doc.deinit(alloc);
+    var resolved = try resolveSkill(alloc, req);
+    defer resolved.deinit(alloc);
 
-    const skill_code = "init";
-    const run_id = try session.generateRunId(alloc, skill_code, now_seconds);
+    const run_id = try session.generateRunId(alloc, resolved.skill_code, now_seconds);
     defer alloc.free(run_id);
 
     var meta = try session.createRunMeta(alloc, .{
         .layout = &layout,
         .run_id = run_id,
         .agent = req.agent.label(),
-        .skill_name = req.skill_name,
-        .skill_code = skill_code,
+        .skill_name = resolved.surface_name,
+        .skill_code = resolved.skill_code,
         .mode = req.runtime.label(),
         .root = layout.root,
-        .skill_path = skill_doc.path,
+        .skill_path = resolved.document.path,
     });
     defer meta.deinit();
 
-    const prompt = try composeInitPrompt(alloc, req);
+    const prompt = try composeSkillPrompt(alloc, req, resolved.prompt_command);
     defer alloc.free(prompt);
     try writeText(meta.prompt_path, prompt);
 
     var argv_buf: [4][]const u8 = undefined;
-    const argv = buildInitArgv(&argv_buf, req.agent, req.agent_binary_override, prompt);
+    const argv = buildAgentArgv(&argv_buf, req.agent, req.agent_binary_override, prompt);
 
     var child = std.process.Child.init(argv, alloc);
     child.cwd = layout.root;
@@ -153,22 +149,76 @@ pub fn dispatchInit(alloc: Allocator, req: Request) !Result {
     };
 }
 
-fn loadSkillDocument(alloc: Allocator, req: Request) !skills_runtime.SkillDocument {
-    const query = try std.fmt.allocPrint(alloc, "vc-{s}", .{req.skill_name});
-    defer alloc.free(query);
-
-    return skills_runtime.loadByName(alloc, .{
-        .skills_dir_override = req.skills_dir_override,
-    }, query) catch skills_runtime.loadByName(alloc, .{
-        .skills_dir_override = req.skills_dir_override,
-    }, req.skill_name);
+pub fn dispatchInit(alloc: Allocator, req: Request) !Result {
+    return dispatchSkill(alloc, req);
 }
 
-fn composeInitPrompt(alloc: Allocator, req: Request) ![]const u8 {
+const ResolvedSkill = struct {
+    surface_name: []const u8,
+    skill_code: []const u8,
+    prompt_command: []const u8,
+    document: skills_runtime.SkillDocument,
+
+    fn deinit(self: *ResolvedSkill, alloc: Allocator) void {
+        alloc.free(self.surface_name);
+        alloc.free(self.skill_code);
+        alloc.free(self.prompt_command);
+        self.document.deinit(alloc);
+        self.* = undefined;
+    }
+};
+
+fn resolveSkill(alloc: Allocator, req: Request) !ResolvedSkill {
+    const requested = std.mem.trim(u8, req.skill_name, " \t\r\n");
+    if (requested.len == 0) return error.FileNotFound;
+
+    const base_name = std.fs.path.basename(requested);
+    const surface_name = if (std.mem.startsWith(u8, base_name, "vc-"))
+        try alloc.dupe(u8, base_name)
+    else
+        try std.fmt.allocPrint(alloc, "vc-{s}", .{base_name});
+    errdefer alloc.free(surface_name);
+
+    const skill_code = if (std.mem.startsWith(u8, surface_name, "vc-"))
+        try alloc.dupe(u8, surface_name["vc-".len..])
+    else
+        try alloc.dupe(u8, surface_name);
+    errdefer alloc.free(skill_code);
+
+    const prompt_command = try std.fmt.allocPrint(alloc, "/{s}", .{surface_name});
+    errdefer alloc.free(prompt_command);
+
+    const queries = [_][]const u8{
+        requested,
+        surface_name,
+        skill_code,
+    };
+
+    var last_err: anyerror = error.FileNotFound;
+    for (queries) |query| {
+        const document = skills_runtime.loadByName(alloc, .{
+            .skills_dir_override = req.skills_dir_override,
+        }, query) catch |err| {
+            last_err = err;
+            continue;
+        };
+
+        return .{
+            .surface_name = surface_name,
+            .skill_code = skill_code,
+            .prompt_command = prompt_command,
+            .document = document,
+        };
+    }
+
+    return last_err;
+}
+
+fn composeSkillPrompt(alloc: Allocator, req: Request, prompt_command: []const u8) ![]const u8 {
     var out: std.io.Writer.Allocating = .init(alloc);
     defer out.deinit();
 
-    try out.writer.writeAll("/vc-init");
+    try out.writer.writeAll(prompt_command);
 
     const extra = try inputContext(alloc, req.prompt_text, req.prompt_file);
     defer if (extra) |value| alloc.free(value);
@@ -223,6 +273,15 @@ fn buildInitArgv(
     }
 }
 
+fn buildAgentArgv(
+    argv_buf: *[4][]const u8,
+    agent: Agent,
+    binary_override: ?[]const u8,
+    prompt: []const u8,
+) []const []const u8 {
+    return buildInitArgv(argv_buf, agent, binary_override, prompt);
+}
+
 fn childPid(child: *const std.process.Child) ?std.posix.pid_t {
     const value = child.id;
     return switch (@typeInfo(@TypeOf(value))) {
@@ -263,21 +322,21 @@ fn writeText(path: []const u8, data: []const u8) !void {
     try atomic_file.finish();
 }
 
-test "dispatchInit writes prompt/report/meta and reuses sweep" {
+test "dispatchSkill writes prompt/report/meta and reuses sweep" {
     const testing = std.testing;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills/vc-init");
+    try tmp.dir.makePath("skills/vc-workflow");
     try tmp.dir.writeFile(.{
-        .sub_path = "skills/vc-init/SKILL.md",
+        .sub_path = "skills/vc-workflow/SKILL.md",
         .data =
         \\---
-        \\name: init
-        \\description: Initialize the repo
+        \\name: vc-workflow
+        \\description: Examine, research, implement
         \\---
-        \\# vc-init
+        \\# vc-workflow
         ,
     });
 
@@ -305,9 +364,9 @@ test "dispatchInit writes prompt/report/meta and reuses sweep" {
     const agent_bin = try tmp.dir.realpathAlloc(testing.allocator, "bin/fake-claude.sh");
     defer testing.allocator.free(agent_bin);
 
-    var result = try dispatchInit(testing.allocator, .{
+    var result = try dispatchSkill(testing.allocator, .{
         .agent = .claude,
-        .skill_name = "init",
+        .skill_name = "workflow",
         .root = root_path,
         .runtime = .headless,
         .prompt_text = "Scan the repository and bootstrap context.",
@@ -321,14 +380,48 @@ test "dispatchInit writes prompt/report/meta and reuses sweep" {
 
     const prompt = try std.fs.cwd().readFileAlloc(testing.allocator, result.prompt_path, 8 * 1024);
     defer testing.allocator.free(prompt);
-    try testing.expect(std.mem.startsWith(u8, prompt, "/vc-init"));
+    try testing.expect(std.mem.startsWith(u8, prompt, "/vc-workflow"));
 
     var meta = try session.loadMetaAbsolute(testing.allocator, result.meta_path);
     defer meta.deinit();
     try testing.expectEqual(session.Status.completed, meta.status);
     try testing.expectEqual(@as(i32, 0), meta.exit_code.?);
+    try testing.expectEqualStrings("vc-workflow", meta.skill_name);
+    try testing.expectEqualStrings("workflow", meta.skill_code);
 
     const report = try std.fs.cwd().readFileAlloc(testing.allocator, result.report_path, 8 * 1024);
     defer testing.allocator.free(report);
     try testing.expect(std.mem.indexOf(u8, report, "vc-init ok") != null);
+}
+
+test "resolveSkill normalizes vc-prefixed aliases" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("skills/foundations/vc-aicx");
+    try tmp.dir.writeFile(.{
+        .sub_path = "skills/foundations/vc-aicx/SKILL.md",
+        .data =
+        \\---
+        \\name: aicx
+        \\description: Memory foundation
+        \\---
+        \\# vc-aicx
+        ,
+    });
+
+    const skills_root = try tmp.dir.realpathAlloc(std.testing.allocator, "skills");
+    defer std.testing.allocator.free(skills_root);
+
+    var resolved = try resolveSkill(std.testing.allocator, .{
+        .agent = .codex,
+        .skill_name = "foundations/vc-aicx",
+        .root = "/tmp",
+        .skills_dir_override = skills_root,
+    });
+    defer resolved.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("vc-aicx", resolved.surface_name);
+    try std.testing.expectEqualStrings("aicx", resolved.skill_code);
+    try std.testing.expectEqualStrings("/vc-aicx", resolved.prompt_command);
 }

@@ -3,19 +3,20 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const dispatch_runtime = @import("../apprt/vibecrafted/runtime/dispatch.zig");
 
-pub fn runInit(
+pub fn runSkill(
     alloc: Allocator,
     writer: anytype,
+    skill_name: []const u8,
     argv: []const []const u8,
 ) !u8 {
     if (argv.len == 0 or isHelp(argv[0])) {
-        try printInitHelp(writer);
+        try printSkillHelp(writer, skill_name);
         return 0;
     }
 
     const agent = parseAgent(argv[0]) orelse {
-        try writer.writeAll("error: init expects <claude|codex|gemini> as the first argument\n\n");
-        try printInitHelp(writer);
+        try writer.print("error: {s} expects <claude|codex|gemini> as the first argument\n\n", .{skill_name});
+        try printSkillHelp(writer, skill_name);
         return 1;
     };
 
@@ -67,7 +68,7 @@ pub fn runInit(
             continue;
         }
 
-        try writer.print("error: unknown init argument '{s}'\n", .{arg});
+        try writer.print("error: unknown {s} argument '{s}'\n", .{ skill_name, arg });
         return 1;
     }
 
@@ -77,9 +78,9 @@ pub fn runInit(
         try std.fs.cwd().realpathAlloc(alloc, ".");
     defer alloc.free(resolved_root);
 
-    var result = dispatch_runtime.dispatchInit(alloc, .{
+    var result = dispatch_runtime.dispatchSkill(alloc, .{
         .agent = agent,
-        .skill_name = "init",
+        .skill_name = skill_name,
         .root = resolved_root,
         .runtime = runtime,
         .prompt_text = prompt_text,
@@ -87,9 +88,9 @@ pub fn runInit(
     }) catch |err| {
         switch (err) {
             error.PromptConflict => try writer.writeAll("error: use at most one input source: --prompt or --file\n"),
-            error.TerminalRuntimeNotImplemented => try writer.writeAll("error: vc-board init currently supports only --runtime headless; panel runtime lands with T2/T3 integration\n"),
-            error.FileNotFound => try writer.writeAll("error: vc-init skill surface was not found in the active skills directory\n"),
-            else => try writer.print("error: init dispatch failed: {}\n", .{err}),
+            error.TerminalRuntimeNotImplemented => try writer.print("error: vc-board {s} currently supports only --runtime headless; panel runtime lands with T2/T3 integration\n", .{skill_name}),
+            error.FileNotFound => try writer.print("error: skill surface for '{s}' was not found in the active skills directory\n", .{skill_name}),
+            else => try writer.print("error: {s} dispatch failed: {}\n", .{ skill_name, err }),
         }
         return 1;
     };
@@ -105,6 +106,14 @@ pub fn runInit(
     if (result.launcher_pid) |pid| try writer.print("launcher_pid: {d}\n", .{pid});
 
     return if (result.exit_code == 0) 0 else 1;
+}
+
+pub fn runInit(
+    alloc: Allocator,
+    writer: anytype,
+    argv: []const []const u8,
+) !u8 {
+    return runSkill(alloc, writer, "init", argv);
 }
 
 fn parseAgent(value: []const u8) ?dispatch_runtime.Agent {
@@ -127,13 +136,13 @@ fn isHelp(arg: []const u8) bool {
         std.mem.eql(u8, arg, "help");
 }
 
-fn printInitHelp(writer: anytype) !void {
-    try writer.writeAll(
-        \\Usage: vc-board init <claude|codex|gemini> [--prompt <text>] [--file <path>] [--root <dir>] [--runtime headless]
+fn printSkillHelp(writer: anytype, skill_name: []const u8) !void {
+    try writer.print(
+        \\Usage: vc-board {s} <claude|codex|gemini> [--prompt <text>] [--file <path>] [--root <dir>] [--runtime headless]
         \\
-        \\Headless vertical slice for the vc-init runtime path.
+        \\Headless runtime dispatch path for the `{s}` skill surface.
         \\This command creates a run_id, prompt/report/meta artifacts, tracks launcher_pid,
         \\and performs spawn-time GC for stale live runs before launching.
         \\
-    );
+    , .{ skill_name, skill_name });
 }
