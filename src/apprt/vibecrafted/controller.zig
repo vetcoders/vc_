@@ -11,16 +11,8 @@ pub const Panels = panels_mod.Panels;
 pub const Panel = panels_mod.Panel;
 pub const SplitDirection = panels_mod.SplitDirection;
 pub const FocusDirection = panels_mod.FocusDirection;
-
-pub const SurfaceKind = enum {
-    pty,
-    custom_tui,
-};
-
-pub const InputTarget = struct {
-    panel_id: PanelId,
-    kind: SurfaceKind,
-};
+pub const SurfaceKind = panels_mod.SurfaceKind;
+pub const InputTarget = panels_mod.InputTarget;
 
 pub const SplitOutcome = struct {
     direction: SplitDirection,
@@ -132,8 +124,8 @@ pub const WorkspaceController = struct {
     }
 
     pub fn activeInputTarget(self: *const Self) ?InputTarget {
-        const tab = self.activeTab() orelse return null;
-        return tab.activeInputTarget();
+        const active_tab = self.activeTab() orelse return null;
+        return active_tab.activeInputTarget();
     }
 
     pub fn tab(self: *const Self, id: TabId) ?*TabController {
@@ -299,6 +291,7 @@ pub const Controller = struct {
         name: []const u8,
     ) !InputTarget {
         const id = try self.panels.createInitialNamed(name);
+        errdefer _ = self.closeActive() catch {};
         try self.surface_kinds.put(self.allocator, id, kind);
         return .{ .panel_id = id, .kind = kind };
     }
@@ -321,6 +314,7 @@ pub const Controller = struct {
     ) !SplitOutcome {
         const source = self.activeInputTarget() orelse return error.MissingActivePanel;
         const new_id = try self.panels.splitActiveNamed(direction, name);
+        errdefer _ = self.closeActive() catch {};
         try self.surface_kinds.put(self.allocator, new_id, kind);
         return .{
             .direction = direction,

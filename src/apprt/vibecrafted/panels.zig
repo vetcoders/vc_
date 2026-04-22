@@ -9,6 +9,16 @@ pub const Tree = split_tree.SplitTree(PanelLeaf);
 pub const max_panel_name_len: usize = 64;
 pub const MarblesTabNameEnvVar = "VIBECRAFTED_MARBLES_TAB_NAME";
 
+pub const SurfaceKind = enum {
+    pty,
+    custom_tui,
+};
+
+pub const InputTarget = struct {
+    panel_id: PanelId,
+    kind: SurfaceKind,
+};
+
 pub const SplitDirection = enum {
     horizontal,
     vertical,
@@ -332,6 +342,13 @@ pub const Tab = struct {
     id: TabId,
     name: []const u8,
     panels: Panels,
+    surface_kinds: std.AutoHashMapUnmanaged(PanelId, SurfaceKind) = .{},
+
+    pub const ValidateError = Panels.ValidateError || error{
+        MetadataCountMismatch,
+        MissingPanelMetadata,
+        DanglingPanelMetadata,
+    };
 
     fn init(allocator: Allocator, id: TabId, name: []const u8) !*Tab {
         const tab = try allocator.create(Tab);
@@ -346,6 +363,7 @@ pub const Tab = struct {
     }
 
     fn deinit(self: *Tab, allocator: Allocator) void {
+        self.surface_kinds.deinit(allocator);
         self.panels.deinit();
         allocator.free(self.name);
         allocator.destroy(self);
@@ -353,17 +371,25 @@ pub const Tab = struct {
 
     pub fn createInitialNamed(
         self: *Tab,
+        kind: SurfaceKind,
         name: []const u8,
-    ) Panels.CreateError!PanelId {
-        return self.panels.createInitialNamed(name);
+    ) (Allocator.Error || Panels.CreateError)!InputTarget {
+        const id = try self.panels.createInitialNamed(name);
+        errdefer _ = self.panels.closeActive() catch {};
+        try self.surface_kinds.put(self.panels.allocator, id, kind);
+        return .{ .panel_id = id, .kind = kind };
     }
 
     pub fn splitActiveNamed(
         self: *Tab,
         direction: SplitDirection,
+        kind: SurfaceKind,
         name: []const u8,
-    ) Panels.CreateError!PanelId {
-        return self.panels.splitActiveNamed(direction, name);
+    ) (Allocator.Error || Panels.CreateError)!InputTarget {
+        const id = try self.panels.splitActiveNamed(direction, name);
+        errdefer _ = self.panels.closeActive() catch {};
+        try self.surface_kinds.put(self.panels.allocator, id, kind);
+        return .{ .panel_id = id, .kind = kind };
     }
 
     pub fn activePanelName(self: *const Tab) ?[]const u8 {
@@ -372,6 +398,39 @@ pub const Tab = struct {
 
     pub fn activePaneName(self: *const Tab) ?[]const u8 {
         return self.activePanelName();
+    }
+
+    pub fn panelTarget(self: *const Tab, panel_id: PanelId) ?InputTarget {
+        _ = self.panels.panel(panel_id) orelse return null;
+        const kind = self.surface_kinds.get(panel_id) orelse return null;
+        return .{ .panel_id = panel_id, .kind = kind };
+    }
+
+    pub fn activeInputTarget(self: *const Tab) ?InputTarget {
+        const active_panel = self.panels.activePanel() orelse return null;
+        return self.panelTarget(active_panel.id);
+    }
+
+    pub fn validate(self: *const Tab) ValidateError!void {
+        try self.panels.validate();
+
+        if (self.surface_kinds.count() != self.panels.panelCount()) {
+            return error.MetadataCountMismatch;
+        }
+
+        var panel_it = self.panels.tree.iterator();
+        while (panel_it.next()) |entry| {
+            if (!self.surface_kinds.contains(entry.view.panel.id)) {
+                return error.MissingPanelMetadata;
+            }
+        }
+
+        var kind_it = self.surface_kinds.iterator();
+        while (kind_it.next()) |entry| {
+            if (self.panels.panel(entry.key_ptr.*) == null) {
+                return error.DanglingPanelMetadata;
+            }
+        }
     }
 };
 
@@ -383,9 +442,10 @@ pub const Workspace = struct {
         tab_name: []const u8,
         panel_id: PanelId,
         pane_name: []const u8,
+        target: InputTarget,
     };
 
-    pub const ValidateError = Panels.ValidateError || error{
+    pub const ValidateError = Tab.ValidateError || error{
         ActiveOnEmptyWorkspace,
         MissingActiveTab,
         DuplicateTabId,
@@ -473,24 +533,23 @@ pub const Workspace = struct {
         run_id: []const u8,
         loop_nr: usize,
         direction: SplitDirection,
-        kind: anytype,
+        kind: SurfaceKind,
         inherited_tab_name: ?[]const u8,
     ) !SpawnedMarblesPanel {
-        _ = kind;
-
         const workspace_tab = try self.marblesTabInherited(run_id, inherited_tab_name);
         const pane_name = try marblesPaneName(self.allocator, run_id, loop_nr);
         defer self.allocator.free(pane_name);
 
-        const panel_id = if (workspace_tab.panels.isEmpty())
-            try workspace_tab.createInitialNamed(pane_name)
+        const target = if (workspace_tab.panels.isEmpty())
+            try workspace_tab.createInitialNamed(kind, pane_name)
         else
-            try workspace_tab.splitActiveNamed(direction, pane_name);
+            try workspace_tab.splitActiveNamed(direction, kind, pane_name);
         return .{
             .tab_id = workspace_tab.id,
             .tab_name = workspace_tab.name,
-            .panel_id = panel_id,
-            .pane_name = workspace_tab.panels.panelName(panel_id).?,
+            .panel_id = target.panel_id,
+            .pane_name = workspace_tab.panels.panelName(target.panel_id).?,
+            .target = target,
         };
     }
 
@@ -507,7 +566,7 @@ pub const Workspace = struct {
         for (self.tabs.items) |workspace_tab| {
             if (workspace_tab.id == active_tab_id) found_active = true;
             max_id = @max(max_id, workspace_tab.id);
-            try workspace_tab.panels.validate();
+            try workspace_tab.validate();
 
             var duplicate_ids: usize = 0;
             var duplicate_names: usize = 0;
@@ -729,6 +788,22 @@ test "workspace: marbles tabs isolate run ids and preserve inherited names" {
     try workspace.validate();
 }
 
+test "workspace tab: input targets survive focus moves inside one tab" {
+    const testing = std.testing;
+
+    var workspace = Workspace.init(testing.allocator);
+    defer workspace.deinit();
+
+    const workspace_tab = try workspace.findOrCreateTab("monitor");
+    const monitor = try workspace_tab.createInitialNamed(.custom_tui, "monitor");
+    const shell = try workspace_tab.splitActiveNamed(.horizontal, .pty, "shell");
+
+    try testing.expectEqual(shell, workspace_tab.activeInputTarget().?);
+    try testing.expect(try workspace_tab.panels.focus(.left));
+    try testing.expectEqual(monitor, workspace_tab.activeInputTarget().?);
+    try workspace_tab.validate();
+}
+
 test "workspace: marbles pane names follow the loop contract" {
     const testing = std.testing;
 
@@ -767,6 +842,9 @@ test "workspace: spawnMarblesPanel keeps loops in one tab and ignores mismatched
     try testing.expectEqualStrings("marbles-marb-175510-001", first.tab_name);
     try testing.expectEqualStrings("marb-175510-001", first.pane_name);
     try testing.expectEqualStrings("marb-175510-001-2", second.pane_name);
+    try testing.expectEqual(InputTarget{ .panel_id = first.panel_id, .kind = .pty }, first.target);
+    try testing.expectEqual(InputTarget{ .panel_id = second.panel_id, .kind = .pty }, second.target);
     try testing.expectEqualStrings("marb-175510-001-2", workspace.activeTab().?.activePaneName().?);
+    try testing.expectEqual(second.target, workspace.activeTab().?.activeInputTarget().?);
     try workspace.validate();
 }

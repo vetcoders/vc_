@@ -67,14 +67,14 @@ test "panels test root exercises the public vibecrafted seam" {
         "marb-001",
         1,
         .horizontal,
-        controller_mod.SurfaceKind.custom_tui,
+        panels_mod.SurfaceKind.custom_tui,
         tab_name,
     );
     const second_spawn = try workspace.spawnMarblesPanel(
         "marb-001",
         2,
         .vertical,
-        controller_mod.SurfaceKind.custom_tui,
+        panels_mod.SurfaceKind.custom_tui,
         "marbles-other-run",
     );
 
@@ -82,6 +82,14 @@ test "panels test root exercises the public vibecrafted seam" {
     try testing.expectEqualStrings("marbles-marb-001", first_spawn.tab_name);
     try testing.expectEqualStrings("marb-001", first_spawn.pane_name);
     try testing.expectEqualStrings("marb-001-2", second_spawn.pane_name);
+    try testing.expectEqual(
+        panels_mod.InputTarget{
+            .panel_id = first_spawn.panel_id,
+            .kind = .custom_tui,
+        },
+        first_spawn.target,
+    );
+    try testing.expectEqual(second_spawn.target, workspace.activeTab().?.activeInputTarget().?);
     try workspace.validate();
 }
 
