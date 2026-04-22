@@ -458,6 +458,12 @@ fn collectConfigWriteStatus(
 
 fn detectLayout(alloc: Allocator) !Layout {
     const exe_path = try std.fs.selfExePathAlloc(alloc);
+    defer alloc.free(exe_path);
+    return detectLayoutForExePath(alloc, exe_path);
+}
+
+fn detectLayoutForExePath(alloc: Allocator, exe_path_input: []const u8) !Layout {
+    const exe_path = try alloc.dupe(u8, exe_path_input);
     errdefer alloc.free(exe_path);
 
     if (std.mem.indexOf(u8, exe_path, ".app/Contents/MacOS/")) |idx| {
@@ -492,6 +498,18 @@ fn detectLayout(alloc: Allocator) !Layout {
     };
     if (std.mem.eql(u8, std.fs.path.basename(exe_dir), "bin")) {
         const root_dir = std.fs.path.dirname(exe_dir) orelse exe_dir;
+        if (try looksLikeDevZigOut(alloc, root_dir)) {
+            return .{
+                .kind = .dev,
+                .exe_path = exe_path,
+                .root_dir = null,
+                .helpers_dir = null,
+                .skills_dir = null,
+                .bundled_config_path = null,
+                .plist_path = null,
+            };
+        }
+
         const helpers_dir = try alloc.dupe(u8, exe_dir);
         errdefer alloc.free(helpers_dir);
         const skills_dir = try std.fs.path.join(alloc, &.{ root_dir, "share", "skills" });
@@ -518,6 +536,22 @@ fn detectLayout(alloc: Allocator) !Layout {
         .bundled_config_path = null,
         .plist_path = null,
     };
+}
+
+fn looksLikeDevZigOut(alloc: Allocator, root_dir: []const u8) !bool {
+    if (!std.mem.eql(u8, std.fs.path.basename(root_dir), "zig-out")) return false;
+
+    const repo_root = std.fs.path.dirname(root_dir) orelse return false;
+    const build_zig_path = try std.fs.path.join(alloc, &.{ repo_root, "build.zig" });
+    defer alloc.free(build_zig_path);
+    std.fs.accessAbsolute(build_zig_path, .{}) catch return false;
+
+    const src_dir_path = try std.fs.path.join(alloc, &.{ repo_root, "src" });
+    defer alloc.free(src_dir_path);
+    var src_dir = std.fs.openDirAbsolute(src_dir_path, .{}) catch return false;
+    src_dir.close();
+
+    return true;
 }
 
 fn plistStringValue(
@@ -671,7 +705,7 @@ fn printHelp(mode: Mode) !void {
         \\Checks bundle identity, bundled helpers, bundled skills,
         \\config bootstrap, and agent CLIs in PATH.
         \\
-        ,
+    ,
         .{@tagName(mode)},
     );
     try stdout.flush();
@@ -711,14 +745,14 @@ fn findOnPath(alloc: Allocator, name: []const u8) !?[]const u8 {
 }
 
 test "parse output mode" {
-    try std.testing.expectEqual(OutputMode.json, try parseOutputMode(&.{ "--json" }));
-    try std.testing.expectEqual(OutputMode.markdown, try parseOutputMode(&.{ "--md" }));
-    try std.testing.expectError(error.InvalidArguments, parseOutputMode(&.{ "--bogus" }));
+    try std.testing.expectEqual(OutputMode.json, try parseOutputMode(&.{"--json"}));
+    try std.testing.expectEqual(OutputMode.markdown, try parseOutputMode(&.{"--md"}));
+    try std.testing.expectError(error.InvalidArguments, parseOutputMode(&.{"--bogus"}));
 }
 
 test "contains help" {
-    try std.testing.expect(containsHelp(&.{ "--help" }));
-    try std.testing.expect(!containsHelp(&.{ "--json" }));
+    try std.testing.expect(containsHelp(&.{"--help"}));
+    try std.testing.expect(!containsHelp(&.{"--json"}));
 }
 
 test "plist string value extracts bundle metadata" {
@@ -752,4 +786,56 @@ test "plist string value extracts bundle metadata" {
     defer if (executable) |value| std.testing.allocator.free(value);
     try std.testing.expect(executable != null);
     try std.testing.expectEqualStrings("vc-board", executable.?);
+}
+
+test "detect layout treats zig-out runtime as dev tree" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("repo");
+    try tmp.dir.writeFile(.{
+        .sub_path = "repo/build.zig",
+        .data = "const std = @import(\"std\");\n",
+    });
+    try tmp.dir.makePath("repo/src");
+    try tmp.dir.makePath("repo/zig-out/bin");
+    try tmp.dir.writeFile(.{
+        .sub_path = "repo/zig-out/bin/vc-board",
+        .data = "",
+    });
+
+    const exe_path = try tmp.dir.realpathAlloc(std.testing.allocator, "repo/zig-out/bin/vc-board");
+    defer std.testing.allocator.free(exe_path);
+
+    const layout = try detectLayoutForExePath(std.testing.allocator, exe_path);
+    defer layout.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.dev, layout.kind);
+    try std.testing.expect(layout.root_dir == null);
+    try std.testing.expect(layout.helpers_dir == null);
+}
+
+test "detect layout treats portable bin/share install as portable bundle" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("portable/bin");
+    try tmp.dir.makePath("portable/share/skills");
+    try tmp.dir.makePath("portable/share/config");
+    try tmp.dir.writeFile(.{
+        .sub_path = "portable/bin/vc-board",
+        .data = "",
+    });
+
+    const exe_path = try tmp.dir.realpathAlloc(std.testing.allocator, "portable/bin/vc-board");
+    defer std.testing.allocator.free(exe_path);
+
+    const layout = try detectLayoutForExePath(std.testing.allocator, exe_path);
+    defer layout.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.portable, layout.kind);
+    try std.testing.expect(layout.root_dir != null);
+    try std.testing.expect(layout.helpers_dir != null);
+    try std.testing.expect(layout.skills_dir != null);
+    try std.testing.expect(layout.bundled_config_path != null);
 }
