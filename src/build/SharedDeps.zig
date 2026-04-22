@@ -596,6 +596,7 @@ pub fn add(
         switch (self.config.app_runtime) {
             .none => {},
             .gtk => try self.addGtkNg(step),
+            .vibecrafted => {},
         }
     }
 

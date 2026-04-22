@@ -11,6 +11,10 @@ pub const Runtime = enum {
     /// approach to building the application.
     gtk,
 
+    /// Vibecrafted-native runtime. This starts as a minimal contract surface
+    /// and will grow into the board runtime in later phases.
+    vibecrafted,
+
     pub fn default(target: std.Target) Runtime {
         return switch (target.os.tag) {
             // The Linux and FreeBSD default is GTK because it is a full

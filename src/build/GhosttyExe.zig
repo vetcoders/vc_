@@ -11,8 +11,13 @@ exe: *std.Build.Step.Compile,
 install_step: *std.Build.Step.InstallArtifact,
 
 pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Ghostty {
+    const exe_name = switch (cfg.exe_entrypoint) {
+        .vc_board => "vc-board",
+        else => "ghostty",
+    };
+
     const exe: *std.Build.Step.Compile = b.addExecutable(.{
-        .name = "ghostty",
+        .name = exe_name,
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = cfg.target,

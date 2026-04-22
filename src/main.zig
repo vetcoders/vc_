@@ -4,6 +4,7 @@ const build_config = @import("build_config.zig");
 /// See build_config.ExeEntrypoint for why we do this.
 const entrypoint = switch (build_config.exe_entrypoint) {
     .ghostty => @import("main_ghostty.zig"),
+    .vc_board => @import("main_vc_board.zig"),
     .helpgen => @import("helpgen.zig"),
     .mdgen_ghostty_1 => @import("build/mdgen/main_ghostty_1.zig"),
     .mdgen_ghostty_5 => @import("build/mdgen/main_ghostty_5.zig"),

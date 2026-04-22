@@ -152,11 +152,21 @@ pub fn init(b: *std.Build, appVersion: []const u8, libVersion: []const u8) !Conf
         "The font backend to use for discovery and rasterization.",
     ) orelse FontBackend.default(target.result, wasm_target);
 
-    config.app_runtime = b.option(
+    const runtime_alias = b.option(
+        ApprtRuntime,
+        "runtime",
+        "Alias for -Dapp-runtime.",
+    );
+
+    config.app_runtime = runtime_alias orelse b.option(
         ApprtRuntime,
         "app-runtime",
         "The app runtime to use. Not all values supported on all platforms.",
     ) orelse ApprtRuntime.default(target.result);
+
+    if (config.app_runtime == .vibecrafted) {
+        config.exe_entrypoint = .vc_board;
+    }
 
     config.renderer = b.option(
         RendererBackend,
@@ -673,6 +683,7 @@ pub fn genericMacOSTarget(
 /// Therefore, main.zig uses this to switch between the different entrypoints.
 pub const ExeEntrypoint = enum {
     ghostty,
+    vc_board,
     helpgen,
     mdgen_ghostty_1,
     mdgen_ghostty_5,
