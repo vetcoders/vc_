@@ -18,4 +18,5 @@ pub fn main() !void {
 
 test {
     _ = apprt.vibecrafted;
+    _ = @import("../test/panels.zig");
 }

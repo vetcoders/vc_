@@ -57,6 +57,18 @@ pub const CloseResult = union(enum) {
 pub const Panels = struct {
     const Self = @This();
 
+    pub const CreateError = Allocator.Error || error{
+        AlreadyInitialized,
+    };
+
+    pub const ValidateError = error{
+        ActiveOnEmptyTree,
+        MissingActivePanel,
+        DuplicatePanelId,
+        ActiveMissingFromTree,
+        NextIdRegressed,
+    };
+
     allocator: Allocator,
     tree: Tree = .empty,
     active: ?PanelId = null,
@@ -82,7 +94,7 @@ pub const Panels = struct {
         return count;
     }
 
-    pub fn createInitial(self: *Self) Allocator.Error!PanelId {
+    pub fn createInitial(self: *Self) CreateError!PanelId {
         if (!self.tree.isEmpty()) return error.AlreadyInitialized;
 
         const new_panel = self.makePanel();
@@ -96,7 +108,7 @@ pub const Panels = struct {
     pub fn splitActive(
         self: *Self,
         direction: SplitDirection,
-    ) Allocator.Error!PanelId {
+    ) CreateError!PanelId {
         if (self.tree.isEmpty()) return self.createInitial();
 
         const new_panel = self.makePanel();
@@ -165,13 +177,7 @@ pub const Panels = struct {
         return self.findPath(.root, id, 0);
     }
 
-    pub fn validate(self: *const Self) error{
-        ActiveOnEmptyTree,
-        MissingActivePanel,
-        DuplicatePanelId,
-        ActiveMissingFromTree,
-        NextIdRegressed,
-    }!void {
+    pub fn validate(self: *const Self) ValidateError!void {
         if (self.tree.isEmpty()) {
             if (self.active != null) return error.ActiveOnEmptyTree;
             return;

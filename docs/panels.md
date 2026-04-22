@@ -16,6 +16,10 @@ top of it. Neither module renders content. Together they own these truths:
 4. what kind of surface each panel hosts
 5. whether a key is a local board binding or should be forwarded
 
+The stable import surface for downstream tracks is now
+`src/apprt/vibecrafted.zig`. T3/T4 should import from `apprt.vibecrafted`
+rather than reaching into private file paths.
+
 The backing store is Ghostty's immutable
 `src/datastruct/split_tree.zig`. Every layout mutation returns a new tree, then
 `Panels` swaps it in and retires the old one.
@@ -118,6 +122,17 @@ results:
   it to the active panel
 
 This keeps T2's policy testable without forcing T1/T3/T4 to share UI code.
+
+## Public API Surface
+
+Consumers should use the re-exported symbols from `apprt.vibecrafted`:
+
+- `Panels`, `PanelId`, `SplitDirection`, `FocusDirection`, `CloseResult`
+- `Controller`, `SurfaceKind`, `InputTarget`, `RouteResult`
+- `KeyAction`, `matchBoardKey`, `isReservedBoardKey`
+
+That gives T2 one stable seam for orchestration while we keep the internal
+file layout free to evolve.
 
 ## Reserved Keymap
 

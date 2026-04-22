@@ -10,6 +10,8 @@ into the new runtime by accident.
 - `zig build -Druntime=vibecrafted` installs a `vc-board` executable.
 - `./zig-out/bin/vc-board` prints `Vibecrafted runtime v0.0.1` and exits.
 - `zig build test` and `zig build test -Druntime=vibecrafted` stay green.
+- `apprt.vibecrafted` re-exports the panel orchestration API for downstream
+  tracks.
 
 ## Build
 
@@ -22,8 +24,19 @@ zig build -Druntime=vibecrafted
 ```sh
 ./zig-out/bin/vc-board
 zig build test
-zig build test -Druntime=vibecrafted
+zig build test -Druntime=vibecrafted -Dtest-filter=panels
 ```
+
+## Public orchestration seam
+
+Use `apprt.vibecrafted` as the single import surface for board layout policy:
+
+- `Panels` for split-tree mutations
+- `Controller` for surface-kind metadata plus input routing
+- `matchBoardKey` / `isReservedBoardKey` for board-local chords
+
+That keeps T2 consumable by T3/T4 without leaking private file layout into
+other tracks.
 
 ## Current boundary
 

@@ -1,11 +1,17 @@
 const std = @import("std");
 const testing = std.testing;
+const apprt = @import("../src/apprt.zig");
+const input = @import("../src/input.zig");
 
-const panels_mod = @import("../src/apprt/vibecrafted/panels.zig");
-const Panels = panels_mod.Panels;
-const SplitDirection = panels_mod.SplitDirection;
-const FocusDirection = panels_mod.FocusDirection;
-const CloseResult = panels_mod.CloseResult;
+const vibecrafted = apprt.vibecrafted;
+const Panels = vibecrafted.Panels;
+const SplitDirection = vibecrafted.SplitDirection;
+const FocusDirection = vibecrafted.FocusDirection;
+const CloseResult = vibecrafted.CloseResult;
+const Controller = vibecrafted.Controller;
+const SurfaceKind = vibecrafted.SurfaceKind;
+const RouteResult = vibecrafted.RouteResult;
+const KeyAction = vibecrafted.KeyAction;
 
 test "panels: create initial panel" {
     var panels = Panels.init(testing.allocator);
@@ -110,4 +116,59 @@ test "panels: focus cycling works in leaf order" {
     try testing.expect(try panels.focus(.next));
     try testing.expectEqual(first, panels.activePanel().?.id);
     try panels.validate();
+}
+
+test "panels: controller exposes stable routing outcomes through public API" {
+    var controller = Controller.init(testing.allocator);
+    defer controller.deinit();
+
+    const first = try controller.createInitial(.pty);
+    try testing.expectEqual(SurfaceKind.pty, first.kind);
+
+    const split = try controller.splitActive(.horizontal, .custom_tui);
+    try testing.expectEqual(first.panel_id, split.source_panel_id);
+    try testing.expectEqual(SurfaceKind.custom_tui, split.new_panel.kind);
+    try testing.expectEqual(split.new_panel, controller.activeInputTarget().?);
+
+    const routed = try controller.routeKeyEvent(.{
+        .key = .key_a,
+        .unshifted_codepoint = 'a',
+    });
+    try testing.expectEqual(
+        RouteResult{
+            .forwarded = .{
+                .panel_id = split.new_panel.panel_id,
+                .kind = .custom_tui,
+            },
+        },
+        routed,
+    );
+    try controller.validate();
+}
+
+test "panels: reserved board bindings are detected through exported keymap" {
+    const mods: input.Mods = .{ .ctrl = true, .shift = true };
+
+    try testing.expectEqual(
+        KeyAction.split_horizontal,
+        vibecrafted.matchBoardKey(.{
+            .key = .key_h,
+            .mods = mods,
+        }).?,
+    );
+    try testing.expectEqual(
+        KeyAction.focus_right,
+        vibecrafted.matchBoardKey(.{
+            .key = .arrow_right,
+            .mods = mods,
+        }).?,
+    );
+    try testing.expect(vibecrafted.isReservedBoardKey(.{
+        .key = .key_w,
+        .mods = mods,
+    }));
+    try testing.expect(!vibecrafted.isReservedBoardKey(.{
+        .key = .key_h,
+        .mods = .{ .ctrl = true },
+    }));
 }

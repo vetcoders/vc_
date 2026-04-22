@@ -9,8 +9,30 @@ const CoreApp = @import("../App.zig");
 const internal_os = @import("../os/main.zig");
 
 pub const resourcesDir = internal_os.resourcesDir;
+pub const panels = @import("vibecrafted/panels.zig");
+pub const controller = @import("vibecrafted/controller.zig");
+pub const keymap = @import("vibecrafted/keymap.zig");
 pub const Runtime = @import("vibecrafted/runtime.zig").Runtime;
 pub const Surface = @import("vibecrafted/surface.zig").Surface;
+
+pub const PanelId = panels.PanelId;
+pub const Panel = panels.Panel;
+pub const Panels = panels.Panels;
+pub const SplitDirection = panels.SplitDirection;
+pub const FocusDirection = panels.FocusDirection;
+pub const FocusPath = panels.FocusPath;
+pub const CloseResult = panels.CloseResult;
+
+pub const Controller = controller.Controller;
+pub const SurfaceKind = controller.SurfaceKind;
+pub const InputTarget = controller.InputTarget;
+pub const SplitOutcome = controller.SplitOutcome;
+pub const FocusOutcome = controller.FocusOutcome;
+pub const CloseOutcome = controller.CloseOutcome;
+pub const RouteResult = controller.RouteResult;
+pub const KeyAction = keymap.Action;
+pub const matchBoardKey = keymap.match;
+pub const isReservedBoardKey = keymap.isReserved;
 
 pub const App = struct {
     const Lifecycle = enum {

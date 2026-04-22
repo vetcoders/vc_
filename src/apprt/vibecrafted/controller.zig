@@ -52,6 +52,12 @@ pub const RouteResult = union(enum) {
 pub const Controller = struct {
     const Self = @This();
 
+    pub const ValidateError = Panels.ValidateError || error{
+        MetadataCountMismatch,
+        MissingPanelMetadata,
+        DanglingPanelMetadata,
+    };
+
     allocator: Allocator,
     panels: Panels,
     surface_kinds: std.AutoHashMapUnmanaged(PanelId, SurfaceKind) = .{},
@@ -197,11 +203,7 @@ pub const Controller = struct {
             .none;
     }
 
-    pub fn validate(self: *const Self) error{
-        MetadataCountMismatch,
-        MissingPanelMetadata,
-        DanglingPanelMetadata,
-    }!void {
+    pub fn validate(self: *const Self) ValidateError!void {
         try self.panels.validate();
 
         if (self.surface_kinds.count() != self.panels.panelCount()) {
