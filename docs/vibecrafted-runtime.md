@@ -33,6 +33,9 @@ Use `apprt.vibecrafted` as the single import surface for board layout policy:
 
 - `Panels` for split-tree mutations
 - `Controller` for surface-kind metadata plus input routing
+- `Workspace` for named tabs and marbles run isolation
+- `marblesTabEnvVar` / `marblesTabNameAlloc` / `marblesPaneNameAlloc` for
+  marbles orchestration
 - `matchBoardKey` / `isReservedBoardKey` for board-local chords
 
 That keeps T2 consumable by T3/T4 without leaking private file layout into

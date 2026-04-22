@@ -361,6 +361,24 @@ pub fn build(b: *std.Build) !void {
         const test_run = b.addRunArtifact(test_exe);
         test_step.dependOn(&test_run.step);
 
+        const panels_test_exe = b.addTest(.{
+            .name = "panels-test",
+            .filters = test_filters,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("test/panels.zig"),
+                .target = config.baselineTarget(),
+                .optimize = .Debug,
+                .strip = false,
+                .omit_frame_pointer = false,
+                .unwind_tables = .sync,
+            }),
+            .use_llvm = true,
+        });
+        _ = try deps.add(panels_test_exe);
+
+        const panels_test_run = b.addRunArtifact(panels_test_exe);
+        test_step.dependOn(&panels_test_run.step);
+
         // Normal tests always test our libghostty modules
         //test_step.dependOn(test_lib_vt_step);
 

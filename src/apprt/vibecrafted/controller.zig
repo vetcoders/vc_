@@ -7,6 +7,7 @@ const panels_mod = @import("panels.zig");
 
 pub const PanelId = panels_mod.PanelId;
 pub const Panels = panels_mod.Panels;
+pub const Panel = panels_mod.Panel;
 pub const SplitDirection = panels_mod.SplitDirection;
 pub const FocusDirection = panels_mod.FocusDirection;
 
@@ -85,7 +86,17 @@ pub const Controller = struct {
     }
 
     pub fn createInitial(self: *Self, kind: SurfaceKind) !InputTarget {
-        const id = try self.panels.createInitial();
+        var default_name_buf: [24]u8 = undefined;
+        const name = std.fmt.bufPrint(&default_name_buf, "panel-{d}", .{self.panels.next_panel_id}) catch unreachable;
+        return self.createInitialNamed(kind, name);
+    }
+
+    pub fn createInitialNamed(
+        self: *Self,
+        kind: SurfaceKind,
+        name: []const u8,
+    ) !InputTarget {
+        const id = try self.panels.createInitialNamed(name);
         try self.surface_kinds.put(self.allocator, id, kind);
         return .{ .panel_id = id, .kind = kind };
     }
@@ -95,8 +106,19 @@ pub const Controller = struct {
         direction: SplitDirection,
         kind: SurfaceKind,
     ) !SplitOutcome {
+        var default_name_buf: [24]u8 = undefined;
+        const name = std.fmt.bufPrint(&default_name_buf, "panel-{d}", .{self.panels.next_panel_id}) catch unreachable;
+        return self.splitActiveNamed(direction, kind, name);
+    }
+
+    pub fn splitActiveNamed(
+        self: *Self,
+        direction: SplitDirection,
+        kind: SurfaceKind,
+        name: []const u8,
+    ) !SplitOutcome {
         const source = self.activeInputTarget() orelse return error.MissingActivePanel;
-        const new_id = try self.panels.splitActive(direction);
+        const new_id = try self.panels.splitActiveNamed(direction, name);
         try self.surface_kinds.put(self.allocator, new_id, kind);
         return .{
             .direction = direction,
@@ -152,8 +174,12 @@ pub const Controller = struct {
     }
 
     pub fn activeInputTarget(self: *const Self) ?InputTarget {
-        const panel = self.panels.activePanel() orelse return null;
-        return self.panelTarget(panel.id);
+        const active_panel = self.panels.activePanel() orelse return null;
+        return self.panelTarget(active_panel.id);
+    }
+
+    pub fn panel(self: *const Self, panel_id: PanelId) ?Panel {
+        return self.panels.panel(panel_id);
     }
 
     pub fn routeKeyEvent(self: *Self, event: input.KeyEvent) !RouteResult {

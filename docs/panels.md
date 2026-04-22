@@ -20,6 +20,10 @@ The stable import surface for downstream tracks is now
 `src/apprt/vibecrafted.zig`. T3/T4 should import from `apprt.vibecrafted`
 rather than reaching into private file paths.
 
+The runtime-facing orchestration layer now also includes a tab/workspace model
+inside `src/apprt/vibecrafted/panels.zig`, which adds named tabs on top of the
+existing panel tree without coupling T2 to GTK.
+
 The backing store is Ghostty's immutable
 `src/datastruct/split_tree.zig`. Every layout mutation returns a new tree, then
 `Panels` swaps it in and retires the old one.
@@ -41,6 +45,12 @@ The backing store is Ghostty's immutable
 - `SurfaceKind`
   - `pty`
   - `custom_tui`
+- `Workspace`
+  - owns named tabs
+  - each tab owns one `Panels` tree
+- `Tab`
+  - stable `id`
+  - stable `name`
 - `InputTarget`
   - `(panel_id, kind)` pair used by runtime glue
 
@@ -123,12 +133,33 @@ results:
 
 This keeps T2's policy testable without forcing T1/T3/T4 to share UI code.
 
+## Marbles Tab Contract
+
+`Workspace` is where the marbles isolation contract now lives:
+
+- `Workspace.marblesTab(run_id)`
+  - resolves `marbles-<run_id>`
+  - reuses the existing tab if it already exists
+- `Workspace.marblesTabInherited(run_id, inherited_tab_name)`
+  - ignores mismatched inherited env values so a bad caller cannot cross-wire
+    two runs into one tab
+- `Workspace.spawnMarblesPanel(run_id, loop_nr, ...)`
+  - L1 pane name: `<run_id>`
+  - L2+ pane name: `<run_id>-<loop_nr>`
+  - all loops for one `run_id` stay inside the same tab
+  - different `run_id` values always land in different tabs
+
+The env seam is exported as `apprt.vibecrafted.MarblesTabNameEnvVar`
+(`VIBECRAFTED_MARBLES_TAB_NAME`) so T4 can inherit the tab identity directly.
+
 ## Public API Surface
 
 Consumers should use the re-exported symbols from `apprt.vibecrafted`:
 
 - `Panels`, `PanelId`, `SplitDirection`, `FocusDirection`, `CloseResult`
 - `Controller`, `SurfaceKind`, `InputTarget`, `RouteResult`
+- `Workspace`, `Tab`
+- `MarblesTabNameEnvVar`, `marblesTabName`, `marblesPaneName`
 - `KeyAction`, `matchBoardKey`, `isReservedBoardKey`
 
 That gives T2 one stable seam for orchestration while we keep the internal
@@ -149,7 +180,8 @@ through different handlers.
 
 ## Current Boundary
 
-Phase 1 stops before runtime integration on purpose.
+Phase 1 still stops before real widget mounting, but T2 no longer lies about
+tab identity for marbles.
 
 - no GTK wiring
 - no `addSurface` / `removeSurface` runtime hook yet

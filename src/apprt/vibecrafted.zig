@@ -18,12 +18,24 @@ pub const Surface = @import("vibecrafted/surface.zig").Surface;
 pub const Tui = tui.Tui;
 
 pub const PanelId = panels.PanelId;
+pub const TabId = panels.TabId;
 pub const Panel = panels.Panel;
 pub const Panels = panels.Panels;
+pub const Tab = panels.Tab;
+pub const Workspace = panels.Workspace;
 pub const SplitDirection = panels.SplitDirection;
 pub const FocusDirection = panels.FocusDirection;
 pub const FocusPath = panels.FocusPath;
 pub const CloseResult = panels.CloseResult;
+pub const MarblesTabNameEnvVar = panels.MarblesTabNameEnvVar;
+pub const marblesTabName = panels.marblesTabName;
+pub const marblesPaneName = panels.marblesPaneName;
+pub const WorkspaceTab = panels.Tab;
+pub const WorkspaceTabId = panels.TabId;
+pub const SpawnedPanel = panels.Workspace.SpawnedMarblesPanel;
+pub const marblesTabEnvVar = panels.MarblesTabNameEnvVar;
+pub const marblesTabNameAlloc = panels.marblesTabName;
+pub const marblesPaneNameAlloc = panels.marblesPaneName;
 
 pub const Controller = controller.Controller;
 pub const SurfaceKind = controller.SurfaceKind;
