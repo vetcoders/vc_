@@ -211,7 +211,6 @@ jobs:
           VC_BOARD_RUST_MUX_BIN: ${{ github.workspace }}/helper-bin/rust-mux
         run: |
           set -euo pipefail
-          zig build -Druntime=vibecrafted -Demit-macos-app=false
           ./distribution/macos/build-dmg.sh
 
       - name: Notarize DMG

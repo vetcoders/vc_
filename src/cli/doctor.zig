@@ -83,12 +83,16 @@ const Layout = struct {
     root_dir: ?[]const u8,
     helpers_dir: ?[]const u8,
     skills_dir: ?[]const u8,
+    bundled_config_path: ?[]const u8,
+    plist_path: ?[]const u8,
 
     fn deinit(self: Layout, alloc: Allocator) void {
         alloc.free(self.exe_path);
         if (self.root_dir) |value| alloc.free(value);
         if (self.helpers_dir) |value| alloc.free(value);
         if (self.skills_dir) |value| alloc.free(value);
+        if (self.bundled_config_path) |value| alloc.free(value);
+        if (self.plist_path) |value| alloc.free(value);
     }
 };
 
@@ -186,6 +190,7 @@ fn collect(alloc: Allocator) !Report {
     }
 
     try collectBundledAssets(alloc, &report, layout);
+    try collectBundleMetadata(alloc, &report, layout);
     try collectAgentCliStatus(alloc, &report);
 
     return report;
@@ -272,6 +277,103 @@ fn collectBundledAssets(
             "skills",
             "no bundled skills directory detected",
             "Package vc-board through distribution scripts before shipping.",
+        );
+    }
+
+    if (layout.bundled_config_path) |bundled_config_path| {
+        if (std.fs.accessAbsolute(bundled_config_path, .{})) |_| {
+            const summary = try std.fmt.allocPrint(
+                alloc,
+                "bundled config seed detected at {s}",
+                .{bundled_config_path},
+            );
+            defer alloc.free(summary);
+            try report.append(.ok, "bundle-config", summary, null);
+        } else |_| {
+            try report.append(
+                if (layout.kind == .dev) .warn else .fail,
+                "bundle-config",
+                "bundled config seed missing from install artifact",
+                "Rebuild the release bundle so the initial config lands under share/config or Contents/Resources/config.",
+            );
+        }
+    }
+}
+
+fn collectBundleMetadata(
+    alloc: Allocator,
+    report: *Report,
+    layout: Layout,
+) !void {
+    const plist_path = layout.plist_path orelse return;
+
+    const bundle_id = try plistStringValue(alloc, plist_path, "CFBundleIdentifier");
+    defer if (bundle_id) |value| alloc.free(value);
+
+    if (bundle_id) |value| {
+        if (std.mem.eql(u8, value, build_config.bundle_id)) {
+            const summary = try std.fmt.allocPrint(
+                alloc,
+                "bundle identifier matches {s}",
+                .{value},
+            );
+            defer alloc.free(summary);
+            try report.append(.ok, "bundle-id", summary, null);
+        } else {
+            const summary = try std.fmt.allocPrint(
+                alloc,
+                "bundle identifier mismatch: expected {s}, found {s}",
+                .{ build_config.bundle_id, value },
+            );
+            defer alloc.free(summary);
+            try report.append(
+                .fail,
+                "bundle-id",
+                summary,
+                "Rebuild the macOS app bundle so Info.plist matches the vc-board product identity.",
+            );
+        }
+    } else {
+        try report.append(
+            .fail,
+            "bundle-id",
+            "Info.plist missing CFBundleIdentifier",
+            "Rebuild the macOS app bundle so the bundle identifier is written into Info.plist.",
+        );
+    }
+
+    const executable_name = try plistStringValue(alloc, plist_path, "CFBundleExecutable");
+    defer if (executable_name) |value| alloc.free(value);
+
+    if (executable_name) |value| {
+        if (std.mem.eql(u8, value, "vc-board")) {
+            const summary = try std.fmt.allocPrint(
+                alloc,
+                "bundle executable matches {s}",
+                .{value},
+            );
+            defer alloc.free(summary);
+            try report.append(.ok, "bundle-executable", summary, null);
+        } else {
+            const summary = try std.fmt.allocPrint(
+                alloc,
+                "bundle executable mismatch: expected vc-board, found {s}",
+                .{value},
+            );
+            defer alloc.free(summary);
+            try report.append(
+                .fail,
+                "bundle-executable",
+                summary,
+                "Rebuild the macOS bundle so Finder launches the vc-board runtime entrypoint.",
+            );
+        }
+    } else {
+        try report.append(
+            .fail,
+            "bundle-executable",
+            "Info.plist missing CFBundleExecutable",
+            "Rebuild the macOS app bundle so Info.plist points Finder at vc-board.",
         );
     }
 }
@@ -364,12 +466,18 @@ fn detectLayout(alloc: Allocator) !Layout {
         errdefer alloc.free(helpers_dir);
         const skills_dir = try std.fs.path.join(alloc, &.{ app_root, "Contents", "Resources", "skills" });
         errdefer alloc.free(skills_dir);
+        const bundled_config_path = try std.fs.path.join(alloc, &.{ app_root, "Contents", "Resources", "config", "config" });
+        errdefer alloc.free(bundled_config_path);
+        const plist_path = try std.fs.path.join(alloc, &.{ app_root, "Contents", "Info.plist" });
+        errdefer alloc.free(plist_path);
         return .{
             .kind = .macos_app,
             .exe_path = exe_path,
             .root_dir = try alloc.dupe(u8, app_root),
             .helpers_dir = helpers_dir,
             .skills_dir = skills_dir,
+            .bundled_config_path = bundled_config_path,
+            .plist_path = plist_path,
         };
     }
 
@@ -379,6 +487,8 @@ fn detectLayout(alloc: Allocator) !Layout {
         .root_dir = null,
         .helpers_dir = null,
         .skills_dir = null,
+        .bundled_config_path = null,
+        .plist_path = null,
     };
     if (std.mem.eql(u8, std.fs.path.basename(exe_dir), "bin")) {
         const root_dir = std.fs.path.dirname(exe_dir) orelse exe_dir;
@@ -386,12 +496,16 @@ fn detectLayout(alloc: Allocator) !Layout {
         errdefer alloc.free(helpers_dir);
         const skills_dir = try std.fs.path.join(alloc, &.{ root_dir, "share", "skills" });
         errdefer alloc.free(skills_dir);
+        const bundled_config_path = try std.fs.path.join(alloc, &.{ root_dir, "share", "config", "config" });
+        errdefer alloc.free(bundled_config_path);
         return .{
             .kind = .portable,
             .exe_path = exe_path,
             .root_dir = try alloc.dupe(u8, root_dir),
             .helpers_dir = helpers_dir,
             .skills_dir = skills_dir,
+            .bundled_config_path = bundled_config_path,
+            .plist_path = null,
         };
     }
 
@@ -401,7 +515,45 @@ fn detectLayout(alloc: Allocator) !Layout {
         .root_dir = null,
         .helpers_dir = null,
         .skills_dir = null,
+        .bundled_config_path = null,
+        .plist_path = null,
     };
+}
+
+fn plistStringValue(
+    alloc: Allocator,
+    plist_path: []const u8,
+    key: []const u8,
+) !?[]const u8 {
+    var file = try std.fs.openFileAbsolute(plist_path, .{});
+    defer file.close();
+
+    const contents = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(contents);
+
+    const key_prefix = try std.fmt.allocPrint(alloc, "<key>{s}</key>", .{key});
+    defer alloc.free(key_prefix);
+
+    var lines = std.mem.splitScalar(u8, contents, '\n');
+    var next_is_value = false;
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
+        if (!next_is_value) {
+            next_is_value = std.mem.eql(u8, trimmed, key_prefix);
+            continue;
+        }
+
+        const string_prefix = "<string>";
+        const string_suffix = "</string>";
+        if (std.mem.startsWith(u8, trimmed, string_prefix) and std.mem.endsWith(u8, trimmed, string_suffix)) {
+            const start = string_prefix.len;
+            const end = trimmed.len - string_suffix.len;
+            return try alloc.dupe(u8, trimmed[start..end]);
+        }
+        return null;
+    }
+
+    return null;
 }
 
 fn parseOutputMode(argv: []const []const u8) !OutputMode {
@@ -567,4 +719,37 @@ test "parse output mode" {
 test "contains help" {
     try std.testing.expect(containsHelp(&.{ "--help" }));
     try std.testing.expect(!containsHelp(&.{ "--json" }));
+}
+
+test "plist string value extracts bundle metadata" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(.{
+        .sub_path = "Info.plist",
+        .data =
+        \\<?xml version="1.0" encoding="UTF-8"?>
+        \\<plist version="1.0">
+        \\<dict>
+        \\  <key>CFBundleIdentifier</key>
+        \\  <string>com.vibecrafted.vc-board</string>
+        \\  <key>CFBundleExecutable</key>
+        \\  <string>vc-board</string>
+        \\</dict>
+        \\</plist>
+        ,
+    });
+
+    const plist_path = try tmp.dir.realpathAlloc(std.testing.allocator, "Info.plist");
+    defer std.testing.allocator.free(plist_path);
+
+    const bundle_id = try plistStringValue(std.testing.allocator, plist_path, "CFBundleIdentifier");
+    defer if (bundle_id) |value| std.testing.allocator.free(value);
+    try std.testing.expect(bundle_id != null);
+    try std.testing.expectEqualStrings("com.vibecrafted.vc-board", bundle_id.?);
+
+    const executable = try plistStringValue(std.testing.allocator, plist_path, "CFBundleExecutable");
+    defer if (executable) |value| std.testing.allocator.free(value);
+    try std.testing.expect(executable != null);
+    try std.testing.expectEqualStrings("vc-board", executable.?);
 }

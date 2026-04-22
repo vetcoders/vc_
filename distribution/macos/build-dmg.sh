@@ -29,31 +29,50 @@ find_existing_app() {
 }
 
 ensure_binary() {
-  if [[ -d "$APP_SOURCE" || -x "$VC_BOARD_BINARY" ]]; then
+  if [[ -x "$VC_BOARD_BINARY" ]]; then
     return 0
   fi
 
-  echo "Building vc-board binary for macOS bundle..." >&2
+  echo "Building vc-board runtime binary for macOS bundle..." >&2
   (
     cd "$ROOT_DIR"
     zig build -Druntime=vibecrafted
   )
 }
 
-mkdir -p "$ARTIFACT_DIR"
-if [[ -z "$APP_SOURCE" ]]; then
+ensure_app_source() {
+  if [[ -n "$APP_SOURCE" && -d "$APP_SOURCE" ]]; then
+    return 0
+  fi
+
   APP_SOURCE="$(find_existing_app || true)"
-fi
+  if [[ -n "$APP_SOURCE" ]]; then
+    return 0
+  fi
+
+  echo "Building vc-board macOS app shell..." >&2
+  (
+    cd "$ROOT_DIR"
+    zig build vc-board-app -Druntime=vibecrafted
+  )
+
+  APP_SOURCE="$(find_existing_app || true)"
+  if [[ -z "$APP_SOURCE" ]]; then
+    echo "vc-board app bundle was not produced by zig build vc-board-app" >&2
+    exit 1
+  fi
+}
+
+mkdir -p "$ARTIFACT_DIR"
 ensure_binary
+ensure_app_source
 bundle_args=(
   --layout macos
   --output "$STAGE_DIR"
   --version "$VERSION"
   --binary "$VC_BOARD_BINARY"
 )
-if [[ -n "$APP_SOURCE" ]]; then
-  bundle_args+=(--app "$APP_SOURCE")
-fi
+bundle_args+=(--app "$APP_SOURCE")
 "$ROOT_DIR/distribution/bundle.sh" "${bundle_args[@]}"
 
 ln -s /Applications "$STAGE_DIR/Applications"

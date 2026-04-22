@@ -11,12 +11,6 @@ This repo now ships a dedicated `vc-board` packaging path on top of the existing
 
 ## Local Build
 
-Build the runtime binary first:
-
-```bash
-zig build -Druntime=vibecrafted -Demit-macos-app=false
-```
-
 Package macOS:
 
 ```bash
@@ -28,6 +22,13 @@ Package Linux:
 ```bash
 ./distribution/linux/build-tarball.sh
 ```
+
+The macOS DMG script builds both missing prerequisites when needed:
+
+- the standalone `vc-board` runtime binary
+- the rebranded macOS `.app` shell via `zig build vc-board-app -Druntime=vibecrafted`
+
+The Linux tarball script builds the `vc-board` runtime binary when `zig-out/bin/vc-board` is absent.
 
 The distribution scripts expect the helper binaries to be available through one of these paths:
 
