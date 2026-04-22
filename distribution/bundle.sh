@@ -9,6 +9,7 @@ BINARY_SOURCE="${VC_BOARD_BINARY:-$ROOT_DIR/zig-out/bin/vc-board}"
 HELPERS_DIR="${VC_BOARD_HELPERS_DIR:-$HOME/.vibecrafted/bin}"
 SKILLS_DIR="${VC_BOARD_SKILLS_DIR:-$ROOT_DIR/.agents/skills}"
 VERSION="${VC_BOARD_VERSION:-dev}"
+BUILD_HELPERS="${VC_BOARD_BUILD_HELPERS:-1}"
 
 usage() {
   cat <<'EOF'
@@ -42,21 +43,147 @@ if [[ -z "$LAYOUT" || -z "$OUTPUT_DIR" ]]; then
   exit 1
 fi
 
-if [[ ! -x "$BINARY_SOURCE" ]]; then
+needs_binary=1
+if [[ "$LAYOUT" == "macos" && -n "$APP_SOURCE" ]]; then
+  needs_binary=0
+fi
+
+if [[ "$needs_binary" -eq 1 && ! -x "$BINARY_SOURCE" ]]; then
   echo "vc-board binary not found: $BINARY_SOURCE" >&2
   exit 1
 fi
 
-resolve_helper() {
+helper_env_var() {
   local name="$1"
-  if [[ -x "$HELPERS_DIR/$name" ]]; then
-    printf '%s\n' "$HELPERS_DIR/$name"
-    return 0
+  local normalized="${name//-/_}"
+  normalized="${normalized^^}"
+  printf 'VC_BOARD_%s_BIN\n' "$normalized"
+}
+
+helper_candidates() {
+  case "$1" in
+    loctree)
+      printf '%s\n' loctree loct
+      ;;
+    rust-mux)
+      printf '%s\n' rust-mux rust_mux
+      ;;
+    *)
+      printf '%s\n' "$1"
+      ;;
+  esac
+}
+
+helper_repo_dir() {
+  case "$1" in
+    aicx) printf '%s\n' "$ROOT_DIR/../aicx" ;;
+    prview) printf '%s\n' "$ROOT_DIR/../prview" ;;
+    rust-mux) printf '%s\n' "$ROOT_DIR/../rust-mux" ;;
+    *) return 1 ;;
+  esac
+}
+
+helper_repo_bin_paths() {
+  local name="$1"
+  local repo_dir="$2"
+  case "$name" in
+    aicx)
+      printf '%s\n' \
+        "$repo_dir/target/release/aicx" \
+        "$repo_dir/target/debug/aicx"
+      ;;
+    prview)
+      printf '%s\n' \
+        "$repo_dir/target/release/prview" \
+        "$repo_dir/target/debug/prview"
+      ;;
+    rust-mux)
+      printf '%s\n' \
+        "$repo_dir/target/release/rust-mux" \
+        "$repo_dir/target/release/rust_mux" \
+        "$repo_dir/target/debug/rust-mux" \
+        "$repo_dir/target/debug/rust_mux"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+build_helper_from_repo() {
+  local name="$1"
+  local repo_dir
+
+  [[ "$BUILD_HELPERS" == "0" ]] && return 1
+  repo_dir="$(helper_repo_dir "$name")" || return 1
+  [[ -f "$repo_dir/Cargo.toml" ]] || return 1
+
+  echo "Building missing helper $name from $repo_dir" >&2
+  (
+    cd "$repo_dir"
+    case "$name" in
+      aicx) cargo build --release --bin aicx ;;
+      prview) cargo build --release --bin prview ;;
+      rust-mux) cargo build --release --bin rust-mux ;;
+      *) return 1 ;;
+    esac
+  )
+}
+
+resolve_helper_path() {
+  local name="$1"
+  local env_var
+  local env_path=""
+  local candidate=""
+  local repo_dir=""
+
+  env_var="$(helper_env_var "$name")"
+  env_path="${!env_var:-}"
+  if [[ -n "$env_path" ]]; then
+    if [[ -x "$env_path" ]]; then
+      printf '%s\n' "$env_path"
+      return 0
+    fi
+    echo "Helper override $env_var points to a non-executable path: $env_path" >&2
+    return 1
   fi
-  if command -v "$name" >/dev/null 2>&1; then
-    command -v "$name"
-    return 0
+
+  while IFS= read -r candidate; do
+    [[ -z "$candidate" ]] && continue
+
+    if [[ -x "$HELPERS_DIR/$candidate" ]]; then
+      printf '%s\n' "$HELPERS_DIR/$candidate"
+      return 0
+    fi
+
+    env_path="$(type -P "$candidate" || true)"
+    if [[ -n "$env_path" && -x "$env_path" ]]; then
+      printf '%s\n' "$env_path"
+      return 0
+    fi
+  done < <(helper_candidates "$name")
+
+  repo_dir="$(helper_repo_dir "$name" 2>/dev/null || true)"
+  if [[ -n "$repo_dir" ]]; then
+    while IFS= read -r candidate; do
+      [[ -z "$candidate" ]] && continue
+      if [[ -x "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done < <(helper_repo_bin_paths "$name" "$repo_dir")
+
+    if build_helper_from_repo "$name"; then
+      while IFS= read -r candidate; do
+        [[ -z "$candidate" ]] && continue
+        if [[ -x "$candidate" ]]; then
+          printf '%s\n' "$candidate"
+          return 0
+        fi
+      done < <(helper_repo_bin_paths "$name" "$repo_dir")
+    fi
   fi
+
   return 1
 }
 
@@ -65,9 +192,10 @@ copy_helpers() {
   mkdir -p "$destination"
   local helper
   for helper in aicx loctree prview rust-mux; do
-    local resolved
-    if ! resolved="$(resolve_helper "$helper")"; then
+    local resolved=""
+    if ! resolved="$(resolve_helper_path "$helper")"; then
       echo "Missing required helper: $helper" >&2
+      echo "Set $(helper_env_var "$helper") or VC_BOARD_HELPERS_DIR to a directory containing it." >&2
       exit 1
     fi
     cp "$resolved" "$destination/$helper"
