@@ -394,6 +394,29 @@ pub fn build(b: *std.Build) !void {
         test_valgrind_step.dependOn(&valgrind_run.step);
     }
 
+    // Standalone Track T3 Phase 1 demo: vc-board-tui-mock exercises the
+    // operator TUI state machines (apprt/vibecrafted/tui/*) with hardcoded
+    // sample data. Pure presenter — no Ghostty deps, no apprt scaffolding,
+    // builds clean independent of the workspace test gate so the gate can be
+    // smoke-tested end-to-end via `zig build vc-board-tui-mock`.
+    {
+        const tui_mock_step = b.step(
+            "vc-board-tui-mock",
+            "Build the standalone vibecrafted operator TUI demo (Track T3 P1)",
+        );
+        const tui_mock_exe = b.addExecutable(.{
+            .name = "vc-board-tui-mock",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/main_vc_board_tui_mock.zig"),
+                .target = config.baselineTarget(),
+                .optimize = .Debug,
+            }),
+            .use_llvm = true,
+        });
+        const tui_mock_install = b.addInstallArtifact(tui_mock_exe, .{});
+        tui_mock_step.dependOn(&tui_mock_install.step);
+    }
+
     // update-translations does what it sounds like and updates the "pot"
     // files. These should be committed to the repo.
     if (i18n) |v| {
