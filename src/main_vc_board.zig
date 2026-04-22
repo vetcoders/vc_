@@ -29,7 +29,8 @@ pub fn main() !void {
         }
     }
 
-    _ = try vc_install.ensureDefaultConfig(alloc);
+    const ensured_config_path = try vc_install.ensureDefaultConfig(alloc);
+    defer alloc.free(ensured_config_path);
 
     const app = try CoreApp.create(alloc);
     defer app.destroy();

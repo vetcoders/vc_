@@ -191,6 +191,7 @@ pub const WorkspaceController = struct {
         kind: SurfaceKind,
         inherited_tab_name: ?[]const u8,
     ) !SpawnedMarblesPanel {
+        const previous_active_tab_id = self.active_tab_id;
         const workspace_tab = try self.marblesTabInherited(run_id, inherited_tab_name);
         const pane_name = try panels_mod.marblesPaneName(self.allocator, run_id, loop_nr);
         defer self.allocator.free(pane_name);
@@ -199,6 +200,14 @@ pub const WorkspaceController = struct {
             try workspace_tab.controller.createInitialNamed(kind, pane_name)
         else
             (try workspace_tab.controller.splitActiveNamed(direction, kind, pane_name)).new_panel;
+
+        // Background marbles tabs should not steal workspace focus from the
+        // operator's currently active tab.
+        if (previous_active_tab_id) |active_tab_id| {
+            if (active_tab_id != workspace_tab.id) {
+                self.active_tab_id = active_tab_id;
+            }
+        }
 
         return .{
             .tab_id = workspace_tab.id,
