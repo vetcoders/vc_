@@ -204,7 +204,7 @@ pub const WorkspaceController = struct {
             .tab_id = workspace_tab.id,
             .tab_name = workspace_tab.name,
             .panel_id = target.panel_id,
-            .pane_name = workspace_tab.controller.panel(target.panel_id).?.name(),
+            .pane_name = workspace_tab.controller.panels.panelName(target.panel_id).?,
             .target = target,
         };
     }

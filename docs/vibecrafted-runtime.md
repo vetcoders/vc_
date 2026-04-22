@@ -10,6 +10,7 @@ into the new runtime by accident.
 - `zig build -Druntime=vibecrafted` installs a `vc-board` executable.
 - `./zig-out/bin/vc-board` prints `Vibecrafted runtime v0.0.1` and exits.
 - `zig build test` and `zig build test -Druntime=vibecrafted` stay green.
+- `zig build test-panels` runs the dedicated Vibecrafted panels contract suite.
 - `apprt.vibecrafted` re-exports the panel orchestration API for downstream
   tracks.
 
@@ -24,7 +25,7 @@ zig build -Druntime=vibecrafted
 ```sh
 ./zig-out/bin/vc-board
 zig build test
-zig build test -Druntime=vibecrafted -Dtest-filter=panels
+zig build test-panels
 ```
 
 ## Public orchestration seam

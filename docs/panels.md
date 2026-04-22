@@ -33,6 +33,8 @@ The backing store is Ghostty's immutable
 
 - `Panel`
   - stable `id`
+  - pane label is mirrored into panel metadata so name lookups stay stable even
+    after immutable split-tree rewrites
 - `SplitDirection`
   - `horizontal` means "spawn sibling to the right"
   - `vertical` means "spawn sibling below"

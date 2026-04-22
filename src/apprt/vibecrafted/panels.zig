@@ -103,18 +103,23 @@ pub const Panels = struct {
         DuplicatePanelId,
         ActiveMissingFromTree,
         NextIdRegressed,
+        PanelNameCountMismatch,
+        MissingPanelName,
+        DanglingPanelName,
     };
 
     allocator: Allocator,
     tree: Tree = .empty,
     active: ?PanelId = null,
     next_panel_id: PanelId = 1,
+    panel_names: std.AutoHashMapUnmanaged(PanelId, PanelName) = .{},
 
     pub fn init(allocator: Allocator) Self {
         return .{ .allocator = allocator };
     }
 
     pub fn deinit(self: *Self) void {
+        self.panel_names.deinit(self.allocator);
         self.tree.deinit();
         self.* = undefined;
     }
@@ -144,6 +149,8 @@ pub const Panels = struct {
         const next_tree = try Tree.init(self.allocator, &leaf);
         self.replaceTree(next_tree);
         self.active = new_panel.id;
+        errdefer _ = self.closeActive() catch {};
+        try self.panel_names.put(self.allocator, new_panel.id, PanelName.init(name));
         return new_panel.id;
     }
 
@@ -178,6 +185,8 @@ pub const Panels = struct {
         );
         self.replaceTree(next_tree);
         self.active = new_panel.id;
+        errdefer _ = self.closeActive() catch {};
+        try self.panel_names.put(self.allocator, new_panel.id, PanelName.init(name));
         return new_panel.id;
     }
 
@@ -200,6 +209,7 @@ pub const Panels = struct {
             self.tree.deinit();
             self.tree = .empty;
             self.active = null;
+            _ = self.panel_names.remove(active_id);
             return .{ .emptied = active_id };
         }
 
@@ -208,6 +218,7 @@ pub const Panels = struct {
         const next_tree = try self.tree.remove(self.allocator, active_handle);
         self.replaceTree(next_tree);
         self.active = fallback_id;
+        _ = self.panel_names.remove(active_id);
         return .{ .closed = active_id };
     }
 
@@ -230,11 +241,9 @@ pub const Panels = struct {
     }
 
     pub fn panelName(self: *const Self, id: PanelId) ?[]const u8 {
-        var it = self.tree.iterator();
-        while (it.next()) |entry| {
-            if (entry.view.panel.id == id) return entry.view.panel.name();
-        }
-        return null;
+        _ = self.panel(id) orelse return null;
+        const stored_name = self.panel_names.get(id) orelse return null;
+        return stored_name.slice();
     }
 
     pub fn activePath(self: *const Self) ?FocusPath {
@@ -268,6 +277,24 @@ pub const Panels = struct {
 
         if (!found_active) return error.ActiveMissingFromTree;
         if (max_id >= self.next_panel_id) return error.NextIdRegressed;
+
+        if (self.panel_names.count() != self.panelCount()) {
+            return error.PanelNameCountMismatch;
+        }
+
+        var panel_it = self.tree.iterator();
+        while (panel_it.next()) |entry| {
+            if (!self.panel_names.contains(entry.view.panel.id)) {
+                return error.MissingPanelName;
+            }
+        }
+
+        var name_it = self.panel_names.iterator();
+        while (name_it.next()) |entry| {
+            if (self.panel(entry.key_ptr.*) == null) {
+                return error.DanglingPanelName;
+            }
+        }
     }
 
     fn makePanel(self: *Self, name: []const u8) CreateError!Panel {
@@ -335,6 +362,24 @@ pub const Panels = struct {
             .split => |split| self.findPath(split.left, target_id, depth + 1) orelse
                 self.findPath(split.right, target_id, depth + 1),
         };
+    }
+};
+
+const PanelName = struct {
+    buf: [max_panel_name_len]u8,
+    len: u8,
+
+    fn init(name: []const u8) PanelName {
+        var stored: PanelName = .{
+            .buf = undefined,
+            .len = @intCast(name.len),
+        };
+        @memcpy(stored.buf[0..name.len], name);
+        return stored;
+    }
+
+    fn slice(self: *const PanelName) []const u8 {
+        return self.buf[0..self.len];
     }
 };
 
@@ -665,6 +710,19 @@ test "panels: named panel creation preserves pane labels" {
     try testing.expectEqual(@as(u32, 2), second);
     try testing.expectEqualStrings("marbles-run-001", panels.panel(root).?.name());
     try testing.expectEqualStrings("marbles-run-001-2", panels.panel(second).?.name());
+    try panels.validate();
+}
+
+test "panels: stored panel names survive later tree rewrites" {
+    const testing = std.testing;
+
+    var panels = Panels.init(testing.allocator);
+    defer panels.deinit();
+
+    const first = try panels.createInitialNamed("marbles-run-001");
+    _ = try panels.splitActiveNamed(.horizontal, "marbles-run-001-2");
+
+    try testing.expectEqualStrings("marbles-run-001", panels.panelName(first).?);
     try panels.validate();
 }
 

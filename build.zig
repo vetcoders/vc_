@@ -64,6 +64,10 @@ pub fn build(b: *std.Build) !void {
         "Run the app under valgrind",
     );
     const test_step = b.step("test", "Run tests");
+    const test_panels_step = b.step(
+        "test-panels",
+        "Run vibecrafted panels contract tests",
+    );
     const test_lib_vt_step = b.step(
         "test-lib-vt",
         "Run libghostty-vt tests",
@@ -365,7 +369,7 @@ pub fn build(b: *std.Build) !void {
             .name = "panels-test",
             .filters = test_filters,
             .root_module = b.createModule(.{
-                .root_source_file = b.path("test/panels.zig"),
+                .root_source_file = b.path("src/panels_test.zig"),
                 .target = config.baselineTarget(),
                 .optimize = .Debug,
                 .strip = false,
@@ -375,9 +379,11 @@ pub fn build(b: *std.Build) !void {
             .use_llvm = true,
         });
         _ = try deps.add(panels_test_exe);
+        panels_test_exe.root_module.addImport("ghostty.h", ghostty_h.createModule());
 
         const panels_test_run = b.addRunArtifact(panels_test_exe);
         test_step.dependOn(&panels_test_run.step);
+        test_panels_step.dependOn(&panels_test_run.step);
 
         // Normal tests always test our libghostty modules
         //test_step.dependOn(test_lib_vt_step);
