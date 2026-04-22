@@ -1,5 +1,7 @@
 const std = @import("std");
 pub const skills = @import("runtime/skills.zig");
+pub const session = @import("runtime/session.zig");
+pub const dispatch = @import("runtime/dispatch.zig");
 
 pub const Runtime = struct {
     pub const version = "0.0.1";

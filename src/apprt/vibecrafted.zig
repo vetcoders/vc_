@@ -15,6 +15,8 @@ pub const keymap = @import("vibecrafted/keymap.zig");
 pub const tui = @import("vibecrafted/tui/tui.zig");
 pub const Runtime = @import("vibecrafted/runtime.zig").Runtime;
 pub const runtime_skills = @import("vibecrafted/runtime/skills.zig");
+pub const runtime_session = @import("vibecrafted/runtime/session.zig");
+pub const runtime_dispatch = @import("vibecrafted/runtime/dispatch.zig");
 pub const Surface = @import("vibecrafted/surface.zig").Surface;
 pub const Tui = tui.Tui;
 
