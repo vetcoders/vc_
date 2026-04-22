@@ -1,4 +1,5 @@
 const std = @import("std");
+pub const skills = @import("runtime/skills.zig");
 
 pub const Runtime = struct {
     pub const version = "0.0.1";

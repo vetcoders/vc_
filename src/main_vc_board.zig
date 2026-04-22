@@ -2,6 +2,7 @@ const std = @import("std");
 const apprt = @import("apprt.zig");
 const CoreApp = @import("App.zig");
 const doctor = @import("cli/doctor.zig");
+const vc_skills = @import("cli/vc_skills.zig");
 const vc_install = @import("vc_board/install.zig");
 
 pub fn main() !void {
@@ -19,6 +20,14 @@ pub fn main() !void {
         }
         if (std.mem.eql(u8, command, "status")) {
             std.process.exit(try doctor.run(alloc, .status, argv[2..]));
+        }
+        if (std.mem.eql(u8, command, "skills")) {
+            var stdout_buffer: [4096]u8 = undefined;
+            var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+            const stdout = &stdout_writer.interface;
+            defer stdout.flush() catch {};
+
+            std.process.exit(try vc_skills.run(alloc, stdout, argv[2..], .{}));
         }
         if (std.mem.eql(u8, command, "--help") or
             std.mem.eql(u8, command, "-h") or
@@ -45,6 +54,7 @@ pub fn main() !void {
 test {
     _ = apprt.vibecrafted;
     _ = doctor;
+    _ = vc_skills;
 }
 
 fn printHelp() !void {
@@ -52,11 +62,12 @@ fn printHelp() !void {
     var stdout_writer = std.fs.File.stdout().writer(&buffer);
     const stdout = &stdout_writer.interface;
     try stdout.writeAll(
-        \\Usage: vc-board [doctor|status] [--json|--md]
+        \\Usage: vc-board [doctor|status|skills] [--json|--md]
         \\
         \\Without a subcommand, vc-board launches the runtime.
         \\`doctor` validates the install surface.
         \\`status` prints only warnings and failures.
+        \\`skills` scans the runtime skills surface (`list`, `show <name>`).
         \\
     );
     try stdout.flush();
