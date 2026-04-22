@@ -69,6 +69,14 @@ pub const Error = error{
     UnsupportedAgent,
 };
 
+const FailureStage = enum {
+    prompt,
+    spawn,
+    collect,
+    wait,
+    finish,
+};
+
 pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
     if (req.runtime != .headless) return error.TerminalRuntimeNotImplemented;
     if (req.skill_name.len == 0) return error.FileNotFound;
@@ -104,6 +112,12 @@ pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
     });
     defer meta.deinit();
 
+    var failure_stage: FailureStage = .prompt;
+    var guard_armed = true;
+    errdefer if (guard_armed) {
+        meta.reapGhost(failureReason(failure_stage), std.time.timestamp()) catch {};
+    };
+
     const prompt = try composeSkillPrompt(alloc, req, resolved.prompt_command);
     defer alloc.free(prompt);
     try writeText(meta.prompt_path, prompt);
@@ -117,6 +131,7 @@ pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
 
+    failure_stage = .spawn;
     try child.spawn();
     const launcher_pid = childPid(&child);
     if (launcher_pid) |pid| try meta.markRunning(pid, now_seconds);
@@ -126,7 +141,9 @@ pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
     var stderr: std.ArrayListUnmanaged(u8) = .{};
     defer stderr.deinit(alloc);
 
+    failure_stage = .collect;
     try child.collectOutput(alloc, &stdout, &stderr, 2 * 1024 * 1024);
+    failure_stage = .wait;
     const term = try child.wait();
     const exit_code = exitCode(term);
 
@@ -135,7 +152,9 @@ pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
     try writeText(meta.transcript_path, transcript);
     try writeText(meta.report_path, if (stdout.items.len > 0) stdout.items else transcript);
 
+    failure_stage = .finish;
     try meta.finish(exit_code, std.time.timestamp());
+    guard_armed = false;
 
     return .{
         .run_id = try alloc.dupe(u8, meta.run_id),
@@ -231,6 +250,16 @@ fn composeSkillPrompt(alloc: Allocator, req: Request, prompt_command: []const u8
     }
 
     return out.toOwnedSlice();
+}
+
+fn failureReason(stage: FailureStage) []const u8 {
+    return switch (stage) {
+        .prompt => "prompt staging failed before launch",
+        .spawn => "launcher spawn failed before reaching running",
+        .collect => "launcher output collection failed during run",
+        .wait => "launcher wait failed during run",
+        .finish => "run finalization failed after launcher exit",
+    };
 }
 
 fn inputContext(
@@ -424,4 +453,130 @@ test "resolveSkill normalizes vc-prefixed aliases" {
     try std.testing.expectEqualStrings("vc-aicx", resolved.surface_name);
     try std.testing.expectEqualStrings("aicx", resolved.skill_code);
     try std.testing.expectEqualStrings("/vc-aicx", resolved.prompt_command);
+}
+
+test "dispatchSkill ghosts run when prompt staging fails before launch" {
+    const testing = std.testing;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("skills/vc-init");
+    try tmp.dir.writeFile(.{
+        .sub_path = "skills/vc-init/SKILL.md",
+        .data =
+        \\---
+        \\name: vc-init
+        \\description: Bootstrap runtime context
+        \\---
+        \\# vc-init
+        ,
+    });
+
+    const root_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(root_path);
+    const home_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(home_path);
+    const skills_root = try tmp.dir.realpathAlloc(testing.allocator, "skills");
+    defer testing.allocator.free(skills_root);
+
+    try testing.expectError(error.FileNotFound, dispatchSkill(testing.allocator, .{
+        .agent = .claude,
+        .skill_name = "init",
+        .root = root_path,
+        .runtime = .headless,
+        .prompt_file = "missing-prompt.md",
+        .skills_dir_override = skills_root,
+        .vibecrafted_home_override = home_path,
+        .project_slug_override = "vet/sample",
+        .now_seconds = 1710883557,
+    }));
+
+    var layout = try session.resolveLayout(testing.allocator, .{
+        .root = root_path,
+        .now_seconds = 1710883557,
+        .vibecrafted_home_override = home_path,
+        .project_slug_override = "vet/sample",
+    });
+    defer layout.deinit();
+
+    const run_id = try session.generateRunId(testing.allocator, "init", 1710883557);
+    defer testing.allocator.free(run_id);
+
+    var paths = try session.buildRunPaths(testing.allocator, &layout, run_id, "claude");
+    defer paths.deinit();
+
+    var meta = try session.loadMetaAbsolute(testing.allocator, paths.meta_path);
+    defer meta.deinit();
+
+    try testing.expectEqual(session.Status.ghost, meta.status);
+    try testing.expectEqual(@as(?std.posix.pid_t, null), meta.launcher_pid);
+    try testing.expectEqualStrings("prompt staging failed before launch", meta.ghost_reason.?);
+    try testing.expect(!std.mem.eql(u8, meta.lock_path, ""));
+    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(meta.lock_path, .{}));
+}
+
+test "dispatchSkill ghosts run when launcher startup fails after meta creation" {
+    const testing = std.testing;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("skills/vc-init");
+    try tmp.dir.writeFile(.{
+        .sub_path = "skills/vc-init/SKILL.md",
+        .data =
+        \\---
+        \\name: vc-init
+        \\description: Bootstrap runtime context
+        \\---
+        \\# vc-init
+        ,
+    });
+
+    const root_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(root_path);
+    const home_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(home_path);
+    const skills_root = try tmp.dir.realpathAlloc(testing.allocator, "skills");
+    defer testing.allocator.free(skills_root);
+
+    try testing.expectError(error.FileNotFound, dispatchSkill(testing.allocator, .{
+        .agent = .claude,
+        .skill_name = "init",
+        .root = root_path,
+        .runtime = .headless,
+        .prompt_text = "Bootstrap project context.",
+        .skills_dir_override = skills_root,
+        .vibecrafted_home_override = home_path,
+        .project_slug_override = "vet/sample",
+        .agent_binary_override = "missing-launcher-binary",
+        .now_seconds = 1710883557,
+    }));
+
+    var layout = try session.resolveLayout(testing.allocator, .{
+        .root = root_path,
+        .now_seconds = 1710883557,
+        .vibecrafted_home_override = home_path,
+        .project_slug_override = "vet/sample",
+    });
+    defer layout.deinit();
+
+    const run_id = try session.generateRunId(testing.allocator, "init", 1710883557);
+    defer testing.allocator.free(run_id);
+
+    var paths = try session.buildRunPaths(testing.allocator, &layout, run_id, "claude");
+    defer paths.deinit();
+
+    var meta = try session.loadMetaAbsolute(testing.allocator, paths.meta_path);
+    defer meta.deinit();
+
+    try testing.expectEqual(session.Status.ghost, meta.status);
+    try testing.expect(meta.ghost_reason != null);
+    try testing.expect(
+        std.mem.eql(u8, meta.ghost_reason.?, "launcher spawn failed before reaching running") or
+            std.mem.eql(u8, meta.ghost_reason.?, "launcher output collection failed during run") or
+            std.mem.eql(u8, meta.ghost_reason.?, "launcher wait failed during run"),
+    );
+    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(meta.lock_path, .{}));
 }
