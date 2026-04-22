@@ -242,7 +242,7 @@ pub const Panels = struct {
 
     pub fn panelName(self: *const Self, id: PanelId) ?[]const u8 {
         _ = self.panel(id) orelse return null;
-        const stored_name = self.panel_names.get(id) orelse return null;
+        const stored_name = self.panel_names.getPtr(id) orelse return null;
         return stored_name.slice();
     }
 
