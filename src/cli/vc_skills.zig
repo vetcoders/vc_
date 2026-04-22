@@ -167,3 +167,37 @@ test "skills cli show renders body" {
     try testing.expect(std.mem.indexOf(u8, stream.getWritten(), "name: vc-beta") != null);
     try testing.expect(std.mem.indexOf(u8, stream.getWritten(), "# Beta\nBody text.\n") != null);
 }
+
+test "skills cli show resolves nested skill by folder alias" {
+    const testing = std.testing;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("skills/foundations/vc-aicx");
+    try tmp.dir.writeFile(.{
+        .sub_path = "skills/foundations/vc-aicx/SKILL.md",
+        .data =
+        \\---
+        \\name: aicx
+        \\description: Memory foundation
+        \\---
+        \\# AICX
+        \\Intent retrieval.
+        ,
+    });
+
+    const skills_root = try tmp.dir.realpathAlloc(testing.allocator, "skills");
+    defer testing.allocator.free(skills_root);
+
+    var buf: [2048]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buf);
+
+    const exit_code = try run(testing.allocator, stream.writer(), &.{ "show", "vc-aicx" }, .{
+        .skills_dir_override = skills_root,
+    });
+
+    try testing.expectEqual(@as(u8, 0), exit_code);
+    try testing.expect(std.mem.indexOf(u8, stream.getWritten(), "name: aicx") != null);
+    try testing.expect(std.mem.indexOf(u8, stream.getWritten(), "# AICX\nIntent retrieval.\n") != null);
+}

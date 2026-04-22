@@ -10,12 +10,14 @@ pub const SkillSummary = struct {
     version: ?[]const u8,
     description: []const u8,
     path: []const u8,
+    relative_path: []const u8,
 
     fn deinit(self: SkillSummary, alloc: Allocator) void {
         alloc.free(self.name);
         if (self.version) |version| alloc.free(version);
         alloc.free(self.description);
         alloc.free(self.path);
+        alloc.free(self.relative_path);
     }
 };
 
@@ -50,7 +52,7 @@ pub const Catalog = struct {
 
     pub fn findByName(self: *const Catalog, name: []const u8) ?SkillSummary {
         for (self.skills.items) |skill| {
-            if (std.mem.eql(u8, skill.name, name)) return skill;
+            if (matchesSkillQuery(skill, name)) return skill;
         }
         return null;
     }
@@ -75,6 +77,31 @@ pub fn discoverRoot(alloc: Allocator, opts: DiscoverOptions) LoadError![]const u
         else => return err,
     }
 
+    const env_candidates = [_]struct {
+        env_name: []const u8,
+        suffix: []const []const u8,
+    }{
+        .{ .env_name = "VIBECRAFTED_HOME", .suffix = &.{"skills"} },
+        .{ .env_name = "VIBECRAFTED_ROOT", .suffix = &.{ ".vibecrafted", "skills" } },
+        .{ .env_name = "VIBECRAFTED_ROOT", .suffix = &.{"skills"} },
+    };
+
+    inline for (env_candidates) |candidate| {
+        if (std.process.getEnvVarOwned(alloc, candidate.env_name)) |env_path| {
+            defer alloc.free(env_path);
+
+            const joined = try joinWithBase(alloc, env_path, candidate.suffix);
+            defer alloc.free(joined);
+
+            if (isSkillsRoot(joined)) {
+                return std.fs.realpathAlloc(alloc, joined);
+            }
+        } else |err| switch (err) {
+            error.EnvironmentVariableNotFound => {},
+            else => return err,
+        }
+    }
+
     const cwd_abs = try std.fs.cwd().realpathAlloc(alloc, ".");
     defer alloc.free(cwd_abs);
 
@@ -83,7 +110,9 @@ pub fn discoverRoot(alloc: Allocator, opts: DiscoverOptions) LoadError![]const u
 
     const candidates = [_][]const []const u8{
         &.{ cwd_abs, "skills" },
+        &.{ cwd_abs, ".vibecrafted", "skills" },
         &.{ cwd_abs, "..", "vibecrafted", "skills" },
+        &.{ cwd_abs, "..", ".vibecrafted", "skills" },
         &.{ cwd_abs, "..", "vibecrafted-io", "framework", "skills" },
     };
 
@@ -127,17 +156,14 @@ pub fn loadCatalog(alloc: Allocator, opts: DiscoverOptions) LoadError!Catalog {
     var skills_dir = try std.fs.openDirAbsolute(root_dir, .{ .iterate = true });
     defer skills_dir.close();
 
-    var iter = skills_dir.iterate();
-    while (try iter.next()) |entry| {
-        if (entry.kind != .directory) continue;
+    var walk = try skills_dir.walk(alloc);
+    defer walk.deinit();
 
-        const skill_doc_path = try std.fs.path.join(
-            alloc,
-            &.{ root_dir, entry.name, "SKILL.md" },
-        );
+    while (try walk.next()) |entry| {
+        if (entry.kind != .file or !std.mem.eql(u8, entry.basename, "SKILL.md")) continue;
+
+        const skill_doc_path = try std.fs.path.join(alloc, &.{ root_dir, entry.path });
         defer alloc.free(skill_doc_path);
-
-        if (!pathExists(skill_doc_path)) continue;
 
         var document = try loadDocumentAbsolute(alloc, skill_doc_path);
         defer document.deinit(alloc);
@@ -147,6 +173,7 @@ pub fn loadCatalog(alloc: Allocator, opts: DiscoverOptions) LoadError!Catalog {
             .version = if (document.version) |version| try alloc.dupe(u8, version) else null,
             .description = try alloc.dupe(u8, document.description),
             .path = try alloc.dupe(u8, document.path),
+            .relative_path = try alloc.dupe(u8, entry.path),
         });
     }
 
@@ -174,7 +201,11 @@ pub fn loadDocumentAbsolute(alloc: Allocator, path: []const u8) LoadError!SkillD
 }
 
 fn lessThanByName(_: void, a: SkillSummary, b: SkillSummary) bool {
-    return std.mem.lessThan(u8, a.name, b.name);
+    return switch (std.mem.order(u8, a.name, b.name)) {
+        .lt => true,
+        .gt => false,
+        .eq => std.mem.lessThan(u8, a.relative_path, b.relative_path),
+    };
 }
 
 fn validateAndDupeRoot(alloc: Allocator, path: []const u8) LoadError![]const u8 {
@@ -194,17 +225,48 @@ fn isSkillsRoot(path: []const u8) bool {
     var dir = std.fs.openDirAbsolute(path, .{ .iterate = true }) catch return false;
     defer dir.close();
 
-    var iter = dir.iterate();
-    while (iter.next() catch return false) |entry| {
-        if (entry.kind != .directory) continue;
+    var walk = dir.walk(std.heap.page_allocator) catch return false;
+    defer walk.deinit();
 
-        const candidate = std.fs.path.join(std.heap.page_allocator, &.{ path, entry.name, "SKILL.md" }) catch return false;
-        defer std.heap.page_allocator.free(candidate);
-
-        if (pathExists(candidate)) return true;
+    while (walk.next() catch return false) |entry| {
+        if (entry.kind == .file and std.mem.eql(u8, entry.basename, "SKILL.md")) {
+            return true;
+        }
     }
 
     return false;
+}
+
+fn joinWithBase(
+    alloc: Allocator,
+    base: []const u8,
+    suffix: []const []const u8,
+) LoadError![]const u8 {
+    var parts: std.ArrayList([]const u8) = .{};
+    defer parts.deinit(alloc);
+
+    try parts.append(alloc, base);
+    try parts.appendSlice(alloc, suffix);
+    return std.fs.path.join(alloc, parts.items);
+}
+
+fn matchesSkillQuery(skill: SkillSummary, query: []const u8) bool {
+    if (std.mem.eql(u8, skill.name, query)) return true;
+    if (std.mem.eql(u8, skill.relative_path, query)) return true;
+
+    const stem = skillPathStem(skill.relative_path);
+    if (std.mem.eql(u8, stem, query)) return true;
+
+    return std.mem.eql(u8, std.fs.path.basename(stem), query);
+}
+
+fn skillPathStem(relative_path: []const u8) []const u8 {
+    const suffix = "/SKILL.md";
+    if (std.mem.endsWith(u8, relative_path, suffix)) {
+        return relative_path[0 .. relative_path.len - suffix.len];
+    }
+    if (std.mem.eql(u8, relative_path, "SKILL.md")) return "";
+    return relative_path;
 }
 
 fn pathExists(path: []const u8) bool {
@@ -395,4 +457,37 @@ test "load catalog scans skill directories and sorts by name" {
     try std.testing.expectEqualStrings("alpha", catalog.skills.items[0].name);
     try std.testing.expectEqualStrings("zeta", catalog.skills.items[1].name);
     try std.testing.expectEqualStrings("A first skill", catalog.skills.items[0].description);
+    try std.testing.expectEqualStrings("alpha/SKILL.md", catalog.skills.items[0].relative_path);
+}
+
+test "load catalog scans nested skills and resolves folder aliases" {
+    const testing = std.testing;
+
+    var tmp = testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("skills/foundations/vc-aicx");
+    try tmp.dir.writeFile(.{
+        .sub_path = "skills/foundations/vc-aicx/SKILL.md",
+        .data =
+        \\---
+        \\name: aicx
+        \\version: 3.0.0
+        \\description: Foundation memory skill
+        \\---
+        \\# AICX
+        ,
+    });
+
+    const skills_root = try tmp.dir.realpathAlloc(testing.allocator, "skills");
+    defer testing.allocator.free(skills_root);
+
+    var catalog = try loadCatalog(testing.allocator, .{ .skills_dir_override = skills_root });
+    defer catalog.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), catalog.skills.items.len);
+    try std.testing.expectEqualStrings("foundations/vc-aicx/SKILL.md", catalog.skills.items[0].relative_path);
+    try std.testing.expect(catalog.findByName("aicx") != null);
+    try std.testing.expect(catalog.findByName("vc-aicx") != null);
+    try std.testing.expect(catalog.findByName("foundations/vc-aicx") != null);
 }
