@@ -14,6 +14,8 @@ trap 'rm -rf "$STAGE_DIR"' EXIT
 find_existing_app() {
   local candidate=""
   for candidate in \
+    "$ROOT_DIR/zig-out/vc-board.app" \
+    "$ROOT_DIR/zig-out/Ghostty.app" \
     "$ROOT_DIR/macos/build/ReleaseLocal/vc-board.app" \
     "$ROOT_DIR/macos/build/ReleaseLocal/Ghostty.app" \
     "$ROOT_DIR/macos/build/Debug/vc-board.app" \

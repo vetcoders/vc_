@@ -78,6 +78,7 @@ helper_candidates() {
 helper_repo_dir() {
   case "$1" in
     aicx) printf '%s\n' "$ROOT_DIR/../aicx" ;;
+    loctree) printf '%s\n' "$ROOT_DIR/../loctree" ;;
     prview) printf '%s\n' "$ROOT_DIR/../prview" ;;
     rust-mux) printf '%s\n' "$ROOT_DIR/../rust-mux" ;;
     *) return 1 ;;
@@ -92,6 +93,11 @@ helper_repo_bin_paths() {
       printf '%s\n' \
         "$repo_dir/target/release/aicx" \
         "$repo_dir/target/debug/aicx"
+      ;;
+    loctree)
+      printf '%s\n' \
+        "$repo_dir/target/release/loctree" \
+        "$repo_dir/target/debug/loctree"
       ;;
     prview)
       printf '%s\n' \
@@ -124,6 +130,7 @@ build_helper_from_repo() {
     cd "$repo_dir"
     case "$name" in
       aicx) cargo build --release --bin aicx ;;
+      loctree) cargo build --release --bin loctree ;;
       prview) cargo build --release --bin prview ;;
       rust-mux) cargo build --release --bin rust-mux ;;
       *) return 1 ;;

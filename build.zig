@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const builtin = @import("builtin");
+const RunStep = std.Build.Step.Run;
 const buildpkg = @import("src/build/main.zig");
 
 /// App version from build.zig.zon.
@@ -80,6 +81,14 @@ pub fn build(b: *std.Build) !void {
         "update-translations",
         "Update translation files",
     );
+    const vc_board_app_step: ?*std.Build.Step = if (config.target.result.os.tag.isDarwin() and
+        config.app_runtime == .vibecrafted)
+        b.step(
+            "vc-board-app",
+            "Build and install the vc-board macOS app bundle",
+        )
+    else
+        null;
 
     // Ghostty resources like terminfo, shell integration, themes, etc.
     const resources = try buildpkg.GhosttyResources.init(b, &config, &deps);
@@ -237,6 +246,53 @@ pub fn build(b: *std.Build) !void {
         if (config.emit_macos_app) {
             macos_app.install();
         }
+    }
+
+    if (vc_board_app_step) |step| {
+        const vc_board_xc_config = switch (config.optimize) {
+            .Debug => "Debug",
+            .ReleaseSafe,
+            .ReleaseSmall,
+            .ReleaseFast,
+            => "ReleaseLocal",
+        };
+        const env = try std.process.getEnvMap(b.allocator);
+        const env_map = try b.allocator.create(std.process.EnvMap);
+        env_map.* = .init(b.allocator);
+        if (env.get("PATH")) |v| try env_map.put("PATH", v);
+
+        const build_app = RunStep.create(b, "xcodebuild vc-board app shell");
+        build_app.has_side_effects = true;
+        build_app.cwd = b.path("macos");
+        build_app.env_map = env_map;
+        build_app.addArgs(&.{
+            "xcodebuild",
+            "-project",
+            "Ghostty.xcodeproj",
+            "-scheme",
+            "Ghostty",
+            "-configuration",
+            vc_board_xc_config,
+            "SYMROOT=build",
+            "build",
+        });
+        build_app.expectExitCode(0);
+
+        const stage_app = RunStep.create(b, "stage vc-board app shell");
+        stage_app.has_side_effects = true;
+        stage_app.cwd = b.path("");
+        stage_app.addArgs(&.{
+            "sh",
+            "-c",
+            "set -e; mkdir -p \"$1\"; rm -rf \"$1/$2\"; cp -R \"$3\" \"$1/$2\"",
+            "--",
+            b.install_path,
+            "vc-board.app",
+            b.pathFromRoot(b.fmt("macos/build/{s}/Ghostty.app", .{vc_board_xc_config})),
+        });
+        stage_app.step.dependOn(&build_app.step);
+
+        step.dependOn(&stage_app.step);
     }
 
     // Run step

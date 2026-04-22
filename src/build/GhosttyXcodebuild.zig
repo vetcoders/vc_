@@ -4,6 +4,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const RunStep = std.Build.Step.Run;
 const Config = @import("Config.zig");
+const ApprtRuntime = @import("../apprt/runtime.zig").Runtime;
 const Docs = @import("GhosttyDocs.zig");
 const I18n = @import("GhosttyI18n.zig");
 const Resources = @import("GhosttyResources.zig");
@@ -49,7 +50,9 @@ pub fn init(
     };
 
     const env = try std.process.getEnvMap(b.allocator);
-    const app_path = b.fmt("macos/build/{s}/Ghostty.app", .{xc_config});
+    const built_bundle_name = "Ghostty.app";
+    const installed_bundle_name = bundleName(config.app_runtime);
+    const app_path = b.fmt("macos/build/{s}/{s}", .{ xc_config, built_bundle_name });
 
     // Our step to build the Ghostty macOS app.
     const build = build: {
@@ -166,13 +169,22 @@ pub fn init(
     };
 
     // Our step to copy the app bundle to the install path.
-    // We have to use `cp -R` because there are symlinks in the
-    // bundle.
+    // We use an explicit shell step so the destination bundle name can differ
+    // from the Xcode product name while still producing a concrete artifact
+    // under zig-out/.
     const copy = copy: {
         const step = RunStep.create(b, "copy app bundle");
-        step.addArgs(&.{ "cp", "-R" });
-        step.addFileArg(b.path(app_path));
-        step.addArg(b.fmt("{s}", .{b.install_path}));
+        step.has_side_effects = true;
+        step.cwd = b.path("");
+        step.addArgs(&.{
+            "sh",
+            "-c",
+            "set -e; mkdir -p \"$1\"; rm -rf \"$1/$2\"; cp -R \"$3\" \"$1/$2\"",
+            "--",
+            b.install_path,
+            installed_bundle_name,
+            b.pathFromRoot(app_path),
+        });
         step.step.dependOn(&build.step);
         break :copy step;
     };
@@ -182,6 +194,13 @@ pub fn init(
         .open = open,
         .copy = copy,
         .xctest = xctest,
+    };
+}
+
+fn bundleName(runtime: ApprtRuntime) []const u8 {
+    return switch (runtime) {
+        .vibecrafted => "vc-board.app",
+        else => "Ghostty.app",
     };
 }
 
