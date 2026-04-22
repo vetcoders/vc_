@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=vc-board
+Exec=vc-board
+Icon=com.vibecrafted.vc-board
+Terminal=false
+Categories=Development;Utility;
+Comment=Vibecrafted operator board runtime

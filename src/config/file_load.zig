@@ -3,15 +3,36 @@ const builtin = @import("builtin");
 const assert = @import("../quirks.zig").inlineAssert;
 const Allocator = std.mem.Allocator;
 const internal_os = @import("../os/main.zig");
+const build_config = @import("../build_config.zig");
 
 const log = std.log.scoped(.config);
+
+pub const default_xdg_subpath = switch (build_config.app_runtime) {
+    .vibecrafted => "vibecrafted/vc-board/config",
+    else => "ghostty/config.ghostty",
+};
+
+pub const legacy_xdg_subpath = switch (build_config.app_runtime) {
+    .vibecrafted => "vibecrafted/vc-board/config",
+    else => "ghostty/config",
+};
+
+pub const default_app_support_leaf = switch (build_config.app_runtime) {
+    .vibecrafted => "config",
+    else => "config.ghostty",
+};
+
+pub const legacy_app_support_leaf = switch (build_config.app_runtime) {
+    .vibecrafted => "config",
+    else => "config",
+};
 
 /// Default path for the XDG home configuration file. Returned value
 /// must be freed by the caller.
 pub fn defaultXdgPath(alloc: Allocator) ![]const u8 {
     return try internal_os.xdg.config(
         alloc,
-        .{ .subdir = "ghostty/config.ghostty" },
+        .{ .subdir = default_xdg_subpath },
     );
 }
 
@@ -20,7 +41,7 @@ pub fn defaultXdgPath(alloc: Allocator) ![]const u8 {
 pub fn legacyDefaultXdgPath(alloc: Allocator) ![]const u8 {
     return try internal_os.xdg.config(
         alloc,
-        .{ .subdir = "ghostty/config" },
+        .{ .subdir = legacy_xdg_subpath },
     );
 }
 
@@ -52,13 +73,13 @@ pub fn preferredXdgPath(alloc: Allocator) ![]const u8 {
 /// Default path for the macOS Application Support configuration file.
 /// Returned value must be freed by the caller.
 pub fn defaultAppSupportPath(alloc: Allocator) ![]const u8 {
-    return try internal_os.macos.appSupportDir(alloc, "config.ghostty");
+    return try internal_os.macos.appSupportDir(alloc, default_app_support_leaf);
 }
 
 /// Ghostty <1.3.0 default path for the macOS Application Support
 /// configuration file. Returned value must be freed by the caller.
 pub fn legacyDefaultAppSupportPath(alloc: Allocator) ![]const u8 {
-    return try internal_os.macos.appSupportDir(alloc, "config");
+    return try internal_os.macos.appSupportDir(alloc, legacy_app_support_leaf);
 }
 
 /// Preferred default path for the macOS Application Support configuration file.
@@ -163,4 +184,14 @@ pub fn open(path: []const u8) OpenFileError!std.fs.File {
     if (stat.size == 0) return OpenFileError.FileIsEmpty;
 
     return file;
+}
+
+test "vibecrafted config layout constants" {
+    if (build_config.app_runtime != .vibecrafted) return;
+
+    try std.testing.expectEqualStrings(
+        "vibecrafted/vc-board/config",
+        default_xdg_subpath,
+    );
+    try std.testing.expectEqualStrings("config", default_app_support_leaf);
 }

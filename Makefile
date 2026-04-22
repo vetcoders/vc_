@@ -26,3 +26,31 @@ clean:
 		macos/build \
 		macos/GhosttyKit.xcframework
 .PHONY: clean
+
+vibecrafted:
+	zig build -Druntime=vibecrafted
+.PHONY: vibecrafted
+
+bundle-linux:
+	./distribution/bundle.sh --layout linux --output ./zig-out/bundle
+.PHONY: bundle-linux
+
+bundle-macos:
+	./distribution/bundle.sh --layout macos --output ./zig-out/bundle
+.PHONY: bundle-macos
+
+tarball:
+	./distribution/linux/build-tarball.sh
+.PHONY: tarball
+
+dmg:
+	./distribution/macos/build-dmg.sh
+.PHONY: dmg
+
+wizard:
+	@echo "Legacy Python installers are retired. Use \`make dmg\` on macOS or \`make tarball\` on Linux."
+.PHONY: wizard
+
+gui-install:
+	@echo "Legacy GUI installer is retired. Use \`make dmg\` or open the packaged vc-board.app bundle."
+.PHONY: gui-install
