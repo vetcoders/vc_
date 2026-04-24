@@ -111,33 +111,34 @@ pub const Runtime = struct {
 
     fn routeServerMessage(self: *Runtime, value: std.json.Value) !void {
         if (value != .object) return;
-        var map = value.object;
+        var response = value;
+        var map = &response.object;
 
         // Is it a response? (has id, no method)
         if (map.get("id")) |id_val| {
             if (!map.contains("method")) {
-                const global_id_str = try stringifyValue(self.allocator, id_val);
+                const global_id_str = try idValueKey(self.allocator, id_val);
                 defer self.allocator.free(global_id_str);
 
                 if (self.state.takePendingRequest(global_id_str)) |pending| {
-                    defer self.allocator.free(pending.local_id);
+                    defer pending.deinit(self.allocator);
 
-                    // Rewrite ID back to local
-                    var local_id_val = try parseStringAsValue(self.allocator, pending.local_id);
-                    defer local_id_val.deinit();
+                    if (pending.is_initialize) {
+                        const cache_payload = try stringifyValueAlloc(self.allocator, response);
+                        defer self.allocator.free(cache_payload);
 
-                    // Put local id back
-                    try map.put(self.allocator, "id", local_id_val.value);
+                        const waiters = try self.state.completeInitialize(cache_payload);
+                        defer {
+                            for (waiters) |waiter| waiter.deinit(self.allocator);
+                            self.allocator.free(waiters);
+                        }
 
-                    const payload = try stringifyValueAlloc(self.allocator, value);
-                    defer self.allocator.free(payload);
-
-                    self.state.mutex.lockUncancelable(self.io);
-                    if (self.state.clients.get(pending.client_id)) |channel| {
-                        self.state.mutex.unlock(self.io);
-                        try channel.send(self.io, self.allocator, payload);
+                        try self.sendValueToClientWithId(pending.client_id, response, pending.local_id);
+                        for (waiters) |waiter| {
+                            try self.sendPayloadToClientWithId(waiter.client_id, cache_payload, waiter.local_id);
+                        }
                     } else {
-                        self.state.mutex.unlock(self.io);
+                        try self.sendValueToClientWithId(pending.client_id, response, pending.local_id);
                     }
                     return;
                 }
@@ -145,7 +146,7 @@ pub const Runtime = struct {
         }
 
         // Notification, broadcast
-        const payload = try stringifyValueAlloc(self.allocator, value);
+        const payload = try stringifyValueAlloc(self.allocator, response);
         defer self.allocator.free(payload);
 
         self.state.mutex.lockUncancelable(self.io);
@@ -221,39 +222,119 @@ pub const Runtime = struct {
 
     fn routeClientMessage(self: *Runtime, client_id: usize, value: std.json.Value) !void {
         if (value != .object) return;
-        var map = value.object;
-
+        const request = value;
+        const map = request.object;
         if (map.get("id")) |id_val| {
             // It's a request
-            const is_init = if (map.get("method")) |m| std.mem.eql(u8, m.string, "initialize") else false;
+            const is_init = if (map.get("method")) |m|
+                m == .string and std.mem.eql(u8, m.string, "initialize")
+            else
+                false;
 
-            const local_id_str = try stringifyValue(self.allocator, id_val);
-            defer self.allocator.free(local_id_str);
+            const local_id_json = try stringifyValueAlloc(self.allocator, id_val);
+            defer self.allocator.free(local_id_json);
 
-            const global_id_str = try self.state.registerPendingRequest(client_id, local_id_str, is_init);
+            if (is_init) {
+                const action = try self.state.registerInitializeRequest(client_id, local_id_json);
+                defer action.deinit(self.allocator);
+
+                switch (action) {
+                    .forward => |global_id_str| {
+                        try self.forwardRequestWithGlobalId(request, global_id_str);
+                    },
+                    .wait => {},
+                    .replay => |cached_payload| {
+                        try self.sendPayloadToClientWithId(client_id, cached_payload, local_id_json);
+                    },
+                }
+                return;
+            }
+
+            const global_id_str = try self.state.registerPendingRequest(client_id, local_id_json, false);
             defer self.allocator.free(global_id_str);
 
-            // Overwrite id
-            try map.put(self.allocator, "id", std.json.Value{ .string = global_id_str });
-
-            const payload = try stringifyValueAlloc(self.allocator, value);
-            defer self.allocator.free(payload);
-
-            try self.writeToServer(payload);
+            try self.forwardRequestWithGlobalId(request, global_id_str);
         } else {
             // It's a notification, forward directly
-            const payload = try stringifyValueAlloc(self.allocator, value);
+            const payload = try stringifyValueAlloc(self.allocator, request);
             defer self.allocator.free(payload);
 
             try self.writeToServer(payload);
         }
     }
 
-    fn stringifyValueAlloc(allocator: std.mem.Allocator, val: std.json.Value) ![]const u8 {
-        return try std.fmt.allocPrint(allocator, "{}", .{std.json.fmt(val, .{})});
+    fn forwardRequestWithGlobalId(self: *Runtime, request: std.json.Value, global_id: []const u8) !void {
+        const global_id_json = try std.json.Stringify.valueAlloc(self.allocator, global_id, .{});
+        defer self.allocator.free(global_id_json);
+
+        const payload = try stringifyObjectWithId(self.allocator, request, global_id_json);
+        defer self.allocator.free(payload);
+
+        try self.writeToServer(payload);
     }
 
-    fn stringifyValue(allocator: std.mem.Allocator, val: std.json.Value) ![]const u8 {
+    fn sendValueToClientWithId(self: *Runtime, client_id: usize, value: std.json.Value, local_id_json: []const u8) !void {
+        const payload = try stringifyObjectWithId(self.allocator, value, local_id_json);
+        defer self.allocator.free(payload);
+
+        try self.sendPayloadToClient(client_id, payload);
+    }
+
+    fn sendPayloadToClientWithId(self: *Runtime, client_id: usize, cached_payload: []const u8, local_id_json: []const u8) !void {
+        var parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, cached_payload, .{});
+        defer parsed.deinit();
+
+        try self.sendValueToClientWithId(client_id, parsed.value, local_id_json);
+    }
+
+    fn sendPayloadToClient(self: *Runtime, client_id: usize, payload: []const u8) !void {
+        self.state.mutex.lockUncancelable(self.io);
+        if (self.state.clients.get(client_id)) |channel| {
+            self.state.mutex.unlock(self.io);
+            try channel.send(self.io, self.allocator, payload);
+        } else {
+            self.state.mutex.unlock(self.io);
+        }
+    }
+
+    fn stringifyValueAlloc(allocator: std.mem.Allocator, val: std.json.Value) ![]const u8 {
+        return try std.json.Stringify.valueAlloc(allocator, val, .{});
+    }
+
+    fn stringifyObjectWithId(allocator: std.mem.Allocator, value: std.json.Value, id_json: []const u8) ![]const u8 {
+        if (value != .object) return try stringifyValueAlloc(allocator, value);
+
+        var id_value = try parseStringAsValue(allocator, id_json);
+        defer id_value.deinit();
+
+        var out: std.Io.Writer.Allocating = .init(allocator);
+        defer out.deinit();
+
+        var json_writer: std.json.Stringify = .{ .writer = &out.writer, .options = .{} };
+        try json_writer.beginObject();
+
+        var wrote_id = false;
+        var it = value.object.iterator();
+        while (it.next()) |entry| {
+            try json_writer.objectField(entry.key_ptr.*);
+            if (std.mem.eql(u8, entry.key_ptr.*, "id")) {
+                try json_writer.write(id_value.value);
+                wrote_id = true;
+            } else {
+                try json_writer.write(entry.value_ptr.*);
+            }
+        }
+
+        if (!wrote_id) {
+            try json_writer.objectField("id");
+            try json_writer.write(id_value.value);
+        }
+
+        try json_writer.endObject();
+        return out.toOwnedSlice();
+    }
+
+    fn idValueKey(allocator: std.mem.Allocator, val: std.json.Value) ![]const u8 {
         if (val == .string) return try allocator.dupe(u8, val.string);
         return try stringifyValueAlloc(allocator, val);
     }
