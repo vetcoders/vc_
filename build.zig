@@ -147,19 +147,33 @@ pub fn build(b: *std.Build) !void {
         .use_llvm = true,
     });
     const vc_mux_integration_run = b.addRunArtifact(vc_mux_integration_test);
-    const vc_mux_bin = vc_mux_exe.getEmittedBin();
-    const vc_mux_mock_server_bin = vc_mux_mock_server_exe.getEmittedBin();
-    vc_mux_bin.addStepDependencies(&vc_mux_integration_run.step);
-    vc_mux_mock_server_bin.addStepDependencies(&vc_mux_integration_run.step);
+
+    // The test spawns the mux and mock-server binaries over a temporary unix
+    // socket. Install them to stable zig-out/bin paths so the test can locate
+    // them via env vars without resolving a LazyPath at script-eval time.
+    const vc_mux_install = b.addInstallArtifact(vc_mux_exe, .{});
+    const vc_mux_mock_install = b.addInstallArtifact(vc_mux_mock_server_exe, .{});
+    vc_mux_integration_run.step.dependOn(&vc_mux_install.step);
+    vc_mux_integration_run.step.dependOn(&vc_mux_mock_install.step);
+
     vc_mux_integration_run.setEnvironmentVariable(
         "VC_MUX_TEST_BIN",
-        vc_mux_bin.getPath2(b, &vc_mux_integration_run.step),
+        b.getInstallPath(.bin, vc_mux_exe.name),
     );
     vc_mux_integration_run.setEnvironmentVariable(
         "VC_MUX_MOCK_BIN",
-        vc_mux_mock_server_bin.getPath2(b, &vc_mux_integration_run.step),
+        b.getInstallPath(.bin, vc_mux_mock_server_exe.name),
     );
     test_step.dependOn(&vc_mux_integration_run.step);
+
+    // Dedicated step for running just the vc-mux integration test without
+    // dragging in the whole Ghostty test pipeline. Useful while iterating on
+    // the mux runtime.
+    const test_mux_step = b.step(
+        "test-mux",
+        "Run the vc-mux integration test",
+    );
+    test_mux_step.dependOn(&vc_mux_integration_run.step);
 
     // Ghostty docs
     const docs = try buildpkg.GhosttyDocs.init(b, &deps);

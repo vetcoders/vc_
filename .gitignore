@@ -33,3 +33,11 @@ vgcore.*
 zig-cache/\nzig-out/\n.zig-cache/
 .zig-pkg/
 /zig-pkg
+
+# vc-mux-monitor local build artifacts (produced by build_app.sh / swiftc).
+# The source (VcMuxMonitor.swift, smoke_test.py, build_app.sh) stays tracked;
+# the compiled binary, .app bundle, and .dmg don't.
+tools/vc-mux-monitor/vc-mux-monitor
+tools/vc-mux-monitor/VCMuxMonitor
+tools/vc-mux-monitor/VCMuxMonitor.app/
+tools/vc-mux-monitor/VCMuxMonitor.dmg
