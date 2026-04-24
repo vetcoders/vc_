@@ -109,6 +109,58 @@ pub fn build(b: *std.Build) !void {
     const mux_step = b.step("mux", "Build the vc-mux tool");
     mux_step.dependOn(&b.addInstallArtifact(vc_mux_exe, .{}).step);
 
+    const mux_monitor_step = b.step("mux-monitor", "Build the macOS vc-mux status-bar observer");
+    if (config.target.result.os.tag.isDarwin()) {
+        const mux_monitor_cmd = b.addSystemCommand(&.{
+            "swiftc",
+            "-swift-version",
+            "5",
+            "-Osize",
+            "-framework",
+            "AppKit",
+            "-o",
+        });
+        const mux_monitor_bin = mux_monitor_cmd.addOutputFileArg("vc-mux-monitor");
+        mux_monitor_cmd.addFileArg(b.path("tools/vc-mux-monitor/VcMuxMonitor.swift"));
+        mux_monitor_step.dependOn(&b.addInstallBinFile(mux_monitor_bin, "vc-mux-monitor").step);
+    }
+
+    const vc_mux_mock_server_exe = b.addExecutable(.{
+        .name = "vc-mux-mock-server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/mux/mock_server.zig"),
+            .target = config.baselineTarget(b),
+            .optimize = .Debug,
+        }),
+    });
+    const vc_mux_integration_test = b.addTest(.{
+        .name = "vc-mux-integration-test",
+        .filters = test_filters,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/mux/test_integration.zig"),
+            .target = config.baselineTarget(b),
+            .optimize = .Debug,
+            .strip = false,
+            .omit_frame_pointer = false,
+            .unwind_tables = .sync,
+        }),
+        .use_llvm = true,
+    });
+    const vc_mux_integration_run = b.addRunArtifact(vc_mux_integration_test);
+    const vc_mux_bin = vc_mux_exe.getEmittedBin();
+    const vc_mux_mock_server_bin = vc_mux_mock_server_exe.getEmittedBin();
+    vc_mux_bin.addStepDependencies(&vc_mux_integration_run.step);
+    vc_mux_mock_server_bin.addStepDependencies(&vc_mux_integration_run.step);
+    vc_mux_integration_run.setEnvironmentVariable(
+        "VC_MUX_TEST_BIN",
+        vc_mux_bin.getPath2(b, &vc_mux_integration_run.step),
+    );
+    vc_mux_integration_run.setEnvironmentVariable(
+        "VC_MUX_MOCK_BIN",
+        vc_mux_mock_server_bin.getPath2(b, &vc_mux_integration_run.step),
+    );
+    test_step.dependOn(&vc_mux_integration_run.step);
+
     // Ghostty docs
     const docs = try buildpkg.GhosttyDocs.init(b, &deps);
     if (config.emit_docs) {
