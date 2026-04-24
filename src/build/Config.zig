@@ -67,7 +67,7 @@ emit_unicode_table_gen: bool = false,
 is_dep: bool = false,
 
 /// Environmental properties
-env: std.process.EnvMap,
+env: std.process.Environ.Map,
 
 pub fn init(b: *std.Build, appVersion: []const u8, libVersion: []const u8) !Config {
     // Setup our standard Zig target and optimize options, i.e.
@@ -125,7 +125,7 @@ pub fn init(b: *std.Build, appVersion: []const u8, libVersion: []const u8) !Conf
     const gtk_targets = gtk.targets(b);
 
     // We use env vars throughout the build so we grab them immediately here.
-    var env = try std.process.getEnvMap(b.allocator);
+    var env = try b.graph.environ_map.clone(b.allocator);
     errdefer env.deinit();
 
     var config: Config = .{
@@ -411,7 +411,7 @@ pub fn init(b: *std.Build, appVersion: []const u8, libVersion: []const u8) !Conf
         if (system_package) break :emit_docs true;
 
         // We only default to true if we can find pandoc.
-        const path = expandPath(b.allocator, "pandoc") catch
+        const path = expandPath(b.allocator, b.graph.io, "pandoc", env.get("PATH")) catch
             break :emit_docs false;
         defer if (path) |p| b.allocator.free(p);
         break :emit_docs path != null;
@@ -592,7 +592,7 @@ pub fn terminalOptions(self: *const Config, artifact: TerminalBuildOptions.Artif
 }
 
 /// Returns a baseline CPU target retaining all the other CPU configs.
-pub fn baselineTarget(self: *const Config) std.Build.ResolvedTarget {
+pub fn baselineTarget(self: *const Config, b: *std.Build) std.Build.ResolvedTarget {
     // Set our cpu model as baseline. There may need to be other modifications
     // we need to make such as resetting CPU features but for now this works.
     var q = self.target.query;
@@ -600,11 +600,7 @@ pub fn baselineTarget(self: *const Config) std.Build.ResolvedTarget {
 
     // Same logic as build.resolveTargetQuery but we don't need to
     // handle the native case.
-    return .{
-        .query = q,
-        .result = std.zig.system.resolveTargetQuery(q) catch
-            @panic("unable to resolve baseline query"),
-    };
+    return b.resolveTargetQuery(q);
 }
 
 /// Rehydrate our Config from the comptime options. Note that not all

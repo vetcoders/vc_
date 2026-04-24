@@ -12,16 +12,16 @@ pub fn build(b: *std.Build) !void {
         }),
         .linkage = .static,
     });
-    lib.linkLibC();
+    lib.root_module.link_libc = true;
     // On MSVC, we must not use linkLibCpp because Zig unconditionally
     // passes -nostdinc++ and then adds its bundled libc++/libc++abi
     // include paths, which conflict with MSVC's own C++ runtime headers.
     // The MSVC SDK include directories (added via linkLibC) contain
     // both C and C++ headers, so linkLibCpp is not needed.
     if (target.result.abi != .msvc) {
-        lib.linkLibCpp();
+        lib.root_module.link_libcpp = true;
     }
-    lib.addIncludePath(b.path("vendor"));
+    lib.root_module.addIncludePath(b.path("vendor"));
 
     if (target.result.os.tag.isDarwin()) {
         const apple_sdk = @import("apple_sdk");
@@ -49,7 +49,7 @@ pub fn build(b: *std.Build) !void {
         try flags.append(b.allocator, "-fPIC");
     }
 
-    lib.addCSourceFiles(.{
+    lib.root_module.addCSourceFiles(.{
         .flags = flags.items,
         .files = &.{
             "vendor/simdutf.cpp",

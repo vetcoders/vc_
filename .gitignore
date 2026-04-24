@@ -31,3 +31,5 @@ vgcore.*
 
 /.vibecrafted
 zig-cache/\nzig-out/\n.zig-cache/
+.zig-pkg/
+/zig-pkg

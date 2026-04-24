@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) !void {
         }),
         .linkage = .static,
     });
-    lib.linkLibC();
+    lib.root_module.link_libc = true;
 
     if (target.result.os.tag.isDarwin()) {
         const apple_sdk = @import("apple_sdk");
@@ -27,13 +27,13 @@ pub fn build(b: *std.Build) !void {
     var flags: std.ArrayList([]const u8) = .empty;
     defer flags.deinit(b.allocator);
 
-    lib.addCSourceFiles(.{
+    lib.root_module.addCSourceFiles(.{
         .flags = flags.items,
         .files = &.{"empty.cc"},
     });
 
     if (b.lazyDependency("utfcpp", .{})) |upstream| {
-        lib.addIncludePath(upstream.path(""));
+        lib.root_module.addIncludePath(upstream.path(""));
         lib.installHeadersDirectory(
             upstream.path("source"),
             "",

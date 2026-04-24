@@ -26,9 +26,10 @@ pub fn build(b: *std.Build) !void {
     // use that as the version source of truth. Otherwise we fall back
     // to what is in the build.zig.zon.
     const file_version: ?[]const u8 = if (b.build_root.handle.readFileAlloc(
-        b.allocator,
+        b.graph.io,
         "VERSION",
-        128,
+        b.allocator,
+        std.Io.Limit.limited(128),
     )) |content| std.mem.trim(
         u8,
         content,
@@ -94,8 +95,19 @@ pub fn build(b: *std.Build) !void {
     const resources = try buildpkg.GhosttyResources.init(b, &config, &deps);
     const i18n = if (config.i18n) try buildpkg.GhosttyI18n.init(b, &config) else null;
 
-    // Ghostty executable, the actual runnable Ghostty program.
     const exe = try buildpkg.GhosttyExe.init(b, &config, &deps);
+
+    // vc-mux
+    const vc_mux_exe = b.addExecutable(.{
+        .name = "vc-mux",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main_vc_mux.zig"),
+            .target = config.target,
+            .optimize = config.optimize,
+        }),
+    });
+    const mux_step = b.step("mux", "Build the vc-mux tool");
+    mux_step.dependOn(&b.addInstallArtifact(vc_mux_exe, .{}).step);
 
     // Ghostty docs
     const docs = try buildpkg.GhosttyDocs.init(b, &deps);
@@ -256,15 +268,14 @@ pub fn build(b: *std.Build) !void {
             .ReleaseFast,
             => "ReleaseLocal",
         };
-        const env = try std.process.getEnvMap(b.allocator);
-        const env_map = try b.allocator.create(std.process.EnvMap);
-        env_map.* = .init(b.allocator);
-        if (env.get("PATH")) |v| try env_map.put("PATH", v);
+        const env_map = try b.allocator.create(std.process.Environ.Map);
+        env_map.* = std.process.Environ.Map.init(b.allocator);
+        if (b.graph.environ_map.get("PATH")) |v| try env_map.put("PATH", v);
 
         const build_app = RunStep.create(b, "xcodebuild vc-board app shell");
         build_app.has_side_effects = true;
         build_app.cwd = b.path("macos");
-        build_app.env_map = env_map;
+        build_app.environ_map = env_map;
         build_app.addArgs(&.{
             "xcodebuild",
             "-project",
@@ -352,7 +363,7 @@ pub fn build(b: *std.Build) !void {
         // We need to rebuild Ghostty with a baseline CPU target.
         const valgrind_exe = exe: {
             var valgrind_config = config;
-            valgrind_config.target = valgrind_config.baselineTarget();
+            valgrind_config.target = valgrind_config.baselineTarget(b);
             break :exe try buildpkg.GhosttyExe.init(
                 b,
                 &valgrind_config,
@@ -397,7 +408,7 @@ pub fn build(b: *std.Build) !void {
             .filters = test_filters,
             .root_module = b.createModule(.{
                 .root_source_file = b.path("src/main.zig"),
-                .target = config.baselineTarget(),
+                .target = config.baselineTarget(b),
                 .optimize = .Debug,
                 .strip = false,
                 .omit_frame_pointer = false,
@@ -412,7 +423,7 @@ pub fn build(b: *std.Build) !void {
         // Verify our internal libghostty header.
         const ghostty_h = b.addTranslateC(.{
             .root_source_file = b.path("include/ghostty.h"),
-            .target = config.baselineTarget(),
+            .target = config.baselineTarget(b),
             .optimize = .Debug,
         });
         test_exe.root_module.addImport("ghostty.h", ghostty_h.createModule());
@@ -426,7 +437,7 @@ pub fn build(b: *std.Build) !void {
             .filters = test_filters,
             .root_module = b.createModule(.{
                 .root_source_file = b.path("src/panels_test.zig"),
-                .target = config.baselineTarget(),
+                .target = config.baselineTarget(b),
                 .optimize = .Debug,
                 .strip = false,
                 .omit_frame_pointer = false,
@@ -470,7 +481,7 @@ pub fn build(b: *std.Build) !void {
             .name = "vc-board-tui-mock",
             .root_module = b.createModule(.{
                 .root_source_file = b.path("src/main_vc_board_tui_mock.zig"),
-                .target = config.baselineTarget(),
+                .target = config.baselineTarget(b),
                 .optimize = .Debug,
             }),
             .use_llvm = true,
