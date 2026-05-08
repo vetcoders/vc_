@@ -209,6 +209,14 @@ copy_helpers() {
     cp "$resolved" "$destination/$helper"
     chmod +x "$destination/$helper"
   done
+  if [[ -x "$ROOT_DIR/zig-out/bin/vc-mux" ]]; then
+    cp "$ROOT_DIR/zig-out/bin/vc-mux" "$destination/vc-mux"
+    chmod +x "$destination/vc-mux"
+  fi
+  if [[ -x "$ROOT_DIR/zig-out/bin/vc-mux-monitor" ]]; then
+    cp "$ROOT_DIR/zig-out/bin/vc-mux-monitor" "$destination/vc-mux-monitor"
+    chmod +x "$destination/vc-mux-monitor"
+  fi
 }
 
 copy_skills() {
