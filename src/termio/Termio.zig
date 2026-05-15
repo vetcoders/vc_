@@ -8,7 +8,7 @@ const std = @import("std");
 const assert = @import("../quirks.zig").inlineAssert;
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
-const EnvMap = std.process.EnvMap;
+const EnvMap = std.process.Environ.Map;
 const posix = std.posix;
 const termio = @import("../termio.zig");
 const StreamHandler = @import("stream_handler.zig").StreamHandler;
@@ -20,6 +20,7 @@ const internal_os = @import("../os/main.zig");
 const windows = internal_os.windows;
 const configpkg = @import("../config.zig");
 const ProcessInfo = @import("../pty.zig").ProcessInfo;
+const Instant = @import("../lib/main.zig").time.Instant;
 
 const log = std.log.scoped(.io_exec);
 
@@ -65,7 +66,7 @@ terminal_stream: StreamHandler.Stream,
 
 /// Last time the cursor was reset. This is used to prevent message
 /// flooding with cursor resets.
-last_cursor_reset: ?std.time.Instant = null,
+last_cursor_reset: ?Instant = null,
 
 /// State we have for thread enter. This may be null if we don't need
 /// to keep track of any state or if its already been freed.
@@ -657,7 +658,7 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
     // non-blink state so it is rendered if visible. If we're under
     // HEAVY read load, we don't want to send a ton of these so we
     // use a timer under the covers
-    if (std.time.Instant.now()) |now| cursor_reset: {
+    if (Instant.now()) |now| cursor_reset: {
         if (self.last_cursor_reset) |last| {
             if (now.since(last) <= (500 * std.time.ns_per_ms)) {
                 break :cursor_reset;

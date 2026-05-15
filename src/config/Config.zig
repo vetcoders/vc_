@@ -2404,8 +2404,12 @@ keybind: Keybinds = .{},
 /// The value `clipboard` will always copy text to the selection clipboard
 /// as well as the system clipboard.
 ///
-/// Middle-click paste will always use the selection clipboard. Middle-click
-/// paste is always enabled even if this is `false`.
+/// Middle-click primary paste (see `middle-click-action`) is enabled by
+/// default even if this is `false`. The clipboard it pastes from follows
+/// this setting: with `true` (or `false`) it reads from the selection
+/// clipboard (falling back to the system clipboard on platforms without a
+/// selection clipboard); with `clipboard` it reads from the system
+/// clipboard.
 ///
 /// The default value is true on Linux and macOS.
 @"copy-on-select": CopyOnSelect = switch (builtin.os.tag) {
@@ -2426,6 +2430,16 @@ keybind: Keybinds = .{},
 ///
 /// The default value is `context-menu`.
 @"right-click-action": RightClickAction = .@"context-menu",
+
+/// The action to take when the user middle-clicks on the terminal surface.
+///
+/// Valid values:
+///   * `primary-paste` - Paste from the selection (or system) clipboard per
+///      `copy-on-select`.
+///   * `ignore` - Do nothing, ignore the middle click.
+///
+/// The default value is `primary-paste`.
+@"middle-click-action": MiddleClickAction = .@"primary-paste",
 
 /// The time in milliseconds between clicks to consider a click a repeat
 /// (double, triple, etc.) or an entirely new single click. A value of zero will
@@ -3800,7 +3814,7 @@ _conditional_set: std.EnumSet(conditional.Key) = .{},
 /// The steps we can use to reload the configuration after it has been loaded
 /// without reopening the files. This is used in very specific cases such
 /// as loadTheme which has more details on why.
-_replay_steps: std.ArrayListUnmanaged(Replay.Step) = .{},
+_replay_steps: std.ArrayListUnmanaged(Replay.Step) = .empty,
 
 /// Set to true if Ghostty was executed as xdg-terminal-exec on Linux.
 @"_xdg-terminal-exec": bool = false,
@@ -3885,16 +3899,16 @@ pub fn loadFile(self: *Config, alloc: Allocator, path: []const u8) !void {
 
         else => return err,
     };
-    defer file.close();
+    defer file.close(std.Options.debug_io);
 
     try self.loadFsFile(alloc, &file, path);
 }
 
 /// Load config from the given File.
-fn loadFsFile(self: *Config, alloc: Allocator, file: *std.fs.File, path: []const u8) !void {
+fn loadFsFile(self: *Config, alloc: Allocator, file: *std.Io.File, path: []const u8) !void {
     std.log.info("reading configuration file path={s}", .{path});
     var buf: [2048]u8 = undefined;
-    var file_reader = file.reader(&buf);
+    var file_reader = file.reader(std.Options.debug_io, &buf);
     const reader = &file_reader.interface;
     try self.loadReader(alloc, reader, path);
 }
@@ -3987,12 +4001,12 @@ pub fn loadOptionalFile(
 fn writeConfigTemplate(path: []const u8) !void {
     log.info("creating template config file: path={s}", .{path});
     if (std.fs.path.dirname(path)) |dir_path| {
-        try std.fs.cwd().makePath(dir_path);
-    }
-    const file = try std.fs.createFileAbsolute(path, .{});
-    defer file.close();
+            try std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir_path);
+        }
+    const file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{});
+    defer file.close(std.Options.debug_io);
     var buf: [4096]u8 = undefined;
-    var file_writer = file.writer(&buf);
+    var file_writer = file.writerStreaming(std.Options.debug_io, &buf);
     const writer = &file_writer.interface;
     try writer.print(
         @embedFile("./config-template"),
@@ -4260,9 +4274,9 @@ pub fn loadRecursiveFiles(self: *Config, alloc_gpa: Allocator) !void {
             }
             continue;
         };
-        defer file.close();
+        defer file.close(std.Options.debug_io);
 
-        const stat = try file.stat();
+        const stat = try file.stat(std.Options.debug_io);
         switch (stat.kind) {
             .file => {},
             else => |kind| {
@@ -4407,7 +4421,7 @@ fn loadTheme(self: *Config, theme: Theme) !void {
     )) orelse return;
     const path = themefile.path;
     const file = themefile.file;
-    defer file.close();
+    defer file.close(std.Options.debug_io);
 
     // From this point onwards, we load the theme and do a bit of a dance
     // to achieve two separate goals:
@@ -4429,7 +4443,7 @@ fn loadTheme(self: *Config, theme: Theme) !void {
 
     // Load our theme
     var buf: [2048]u8 = undefined;
-    var file_reader = file.reader(&buf);
+    var file_reader = file.reader(std.Options.debug_io, &buf);
     const reader = &file_reader.interface;
     var iter: cli.args.LineIterator = .{ .r = reader, .filepath = path };
     try new_config.loadIter(alloc_gpa, &iter);
@@ -4566,7 +4580,8 @@ pub fn finalize(self: *Config) !void {
                 // read from SHELL if we're in a probable CLI environment.
                 if (!probable_cli) break :shell_env;
 
-                if (std.process.getEnvVarOwned(alloc, "SHELL")) |value| {
+                if (std.c.getenv("SHELL")) |value_z| {
+                    const value = std.mem.span(value_z);
                     log.info("default shell source=env value={s}", .{value});
 
                     const copy = try alloc.dupeZ(u8, value);
@@ -4574,7 +4589,7 @@ pub fn finalize(self: *Config) !void {
 
                     // If we don't need the working directory, then we can exit now.
                     if (wd != .home) break :command;
-                } else |_| {}
+                }
             }
 
             switch (builtin.os.tag) {
@@ -5077,12 +5092,16 @@ fn probableCliEnvironment() bool {
 
     // If we have TERM_PROGRAM set to a non-empty value, we assume
     // a graphical terminal environment.
-    if (std.posix.getenv("TERM_PROGRAM")) |v| {
+    if (std.c.getenv("TERM_PROGRAM")) |v_z| {
+        const v = std.mem.span(v_z);
         if (v.len > 0) return true;
     }
 
     // CLI arguments makes things probable
-    if (std.os.argv.len > 1) return true;
+    var args_iter = internal_os.args.iterator(std.heap.page_allocator) catch return true;
+    defer args_iter.deinit();
+    _ = args_iter.next();
+    if (args_iter.next() != null) return true;
 
     // Unlikely CLI environment
     return false;
@@ -5651,8 +5670,8 @@ pub const BoldColor = union(enum) {
 pub const ColorList = struct {
     const Self = @This();
 
-    colors: std.ArrayListUnmanaged(Color) = .{},
-    colors_c: std.ArrayListUnmanaged(Color.C) = .{},
+    colors: std.ArrayListUnmanaged(Color) = .empty,
+    colors_c: std.ArrayListUnmanaged(Color.C) = .empty,
 
     /// ghostty_config_color_list_s
     pub const C = extern struct {
@@ -5973,7 +5992,7 @@ pub const RepeatableString = struct {
     const Self = @This();
 
     // Allocator for the list is the arena for the parent config.
-    list: std.ArrayListUnmanaged([:0]const u8) = .{},
+    list: std.ArrayListUnmanaged([:0]const u8) = .empty,
 
     // If true, then the next value will clear the list and start over
     // rather than append. This is a bit of a hack but is here to make
@@ -6287,7 +6306,7 @@ pub const RepeatableFontVariation = struct {
     const Self = @This();
 
     // Allocator for the list is the arena for the parent config.
-    list: std.ArrayListUnmanaged(fontpkg.face.Variation) = .{},
+    list: std.ArrayListUnmanaged(fontpkg.face.Variation) = .empty,
 
     pub fn parseCLI(self: *Self, alloc: Allocator, input_: ?[]const u8) !void {
         const input = input_ orelse return error.ValueRequired;
@@ -6396,6 +6415,22 @@ pub const RepeatableFontVariation = struct {
         try std.testing.expectEqualSlices(u8, "a = wght=200\n", buf.written());
     }
 };
+
+/// Returns true if the given key event would trigger a keybinding
+/// if it were to be processed. This is useful for determining if
+/// a key event should be sent to the terminal or not.
+pub fn keyEventIsBinding(
+    self: *Config,
+    event: inputpkg.KeyEvent,
+) bool {
+    switch (event.action) {
+        .release => return false,
+        .press, .repeat => {},
+    }
+
+    // If we have a keybinding for this event then we return true.
+    return self.keybind.set.getEvent(event) != null;
+}
 
 /// Stores a set of keybinds.
 pub const Keybinds = struct {
@@ -6747,13 +6782,27 @@ pub const Keybinds = struct {
             // Semantic prompts
             try self.set.put(
                 alloc,
-                .{ .key = .{ .physical = .page_up }, .mods = .{ .shift = true, .ctrl = true } },
+                .{ .key = .{ .physical = .arrow_up }, .mods = .{ .shift = true, .ctrl = true } },
                 .{ .jump_to_prompt = -1 },
             );
             try self.set.put(
                 alloc,
-                .{ .key = .{ .physical = .page_down }, .mods = .{ .shift = true, .ctrl = true } },
+                .{ .key = .{ .physical = .arrow_down }, .mods = .{ .shift = true, .ctrl = true } },
                 .{ .jump_to_prompt = 1 },
+            );
+
+            // Move tab
+            try self.set.putFlags(
+                alloc,
+                .{ .key = .{ .physical = .page_up }, .mods = .{ .shift = true, .ctrl = true } },
+                .{ .move_tab = -1 },
+                .{ .performable = true },
+            );
+            try self.set.putFlags(
+                alloc,
+                .{ .key = .{ .physical = .page_down }, .mods = .{ .shift = true, .ctrl = true } },
+                .{ .move_tab = 1 },
+                .{ .performable = true },
             );
 
             // Search
@@ -8540,7 +8589,7 @@ pub const FontShapingBreak = packed struct {
 pub const RepeatableLink = struct {
     const Self = @This();
 
-    links: std.ArrayListUnmanaged(inputpkg.Link) = .{},
+    links: std.ArrayListUnmanaged(inputpkg.Link) = .empty,
 
     pub fn parseCLI(self: *Self, alloc: Allocator, input_: ?[]const u8) !void {
         _ = self;
@@ -8618,6 +8667,15 @@ pub const RightClickAction = enum {
 
     /// Shows a context menu with options.
     @"context-menu",
+};
+
+/// Options for middle-click actions.
+pub const MiddleClickAction = enum {
+    /// Paste from the selection/standard clipboard per `copy-on-select`.
+    @"primary-paste",
+
+    /// No action is taken on middle click.
+    ignore,
 };
 
 /// Shell integration values

@@ -47,8 +47,12 @@ pub fn main() !void {
     defer alloc.free(t.stage2);
     defer alloc.free(t.stage3);
 
+    var io_threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    defer io_threaded.deinit();
+    const io = io_threaded.io();
+
     var buf: [4096]u8 = undefined;
-    var stdout = std.fs.File.stdout().writer(&buf);
+    var stdout = std.Io.File.stdout().writerStreaming(io, &buf);
     try t.writeZig(&stdout.interface);
     // Use flush instead of end because stdout is a pipe when captured by
     // the build system, and pipes cannot be truncated (Windows returns

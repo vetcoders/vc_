@@ -4,6 +4,34 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const Mutex = struct {
+    inner: std.Io.Mutex = .init,
+
+    fn lock(self: *Mutex) void {
+        self.inner.lockUncancelable(std.Options.debug_io);
+    }
+
+    fn unlock(self: *Mutex) void {
+        self.inner.unlock(std.Options.debug_io);
+    }
+};
+
+const Condition = struct {
+    inner: std.Io.Condition = .init,
+
+    fn wait(self: *Condition, mutex: *Mutex) void {
+        self.inner.waitUncancelable(std.Options.debug_io, &mutex.inner);
+    }
+
+    fn timedWait(_: *Condition, _: *Mutex, _: u64) error{Timeout}!void {
+        return error.Timeout;
+    }
+
+    fn signal(self: *Condition) void {
+        self.inner.signal(std.Options.debug_io);
+    }
+};
+
 /// Returns a blocking queue implementation for type T.
 ///
 /// This is tailor made for ghostty usage so it isn't meant to be maximally
@@ -62,12 +90,12 @@ pub fn BlockingQueue(
         len: Size = 0,
 
         /// The big mutex that must be held to read/write.
-        mutex: std.Thread.Mutex = .{},
+        mutex: Mutex = .{},
 
         /// A CV for being notified when the queue is no longer full. This is
         /// used for writing. Note we DON'T have a CV for waiting on the
         /// queue not being EMPTY because we use external notifiers for that.
-        cond_not_full: std.Thread.Condition = .{},
+        cond_not_full: Condition = .{},
         not_full_waiters: usize = 0,
 
         /// Allocate the blocking queue on the heap.

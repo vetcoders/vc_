@@ -163,7 +163,7 @@ pub const RunMeta = struct {
             .completed_at = self.completed_at,
         };
 
-        var out: std.io.Writer.Allocating = .init(self.allocator);
+        var out: std.Io.Writer.Allocating = .init(self.allocator);
         defer out.deinit();
 
         try std.json.Stringify.value(payload, .{
@@ -201,9 +201,9 @@ pub const RunMeta = struct {
 
     pub fn releaseLock(self: *const RunMeta) void {
         const dir_name = std.fs.path.dirname(self.lock_path) orelse return;
-        var dir = std.fs.openDirAbsolute(dir_name, .{}) catch return;
-        defer dir.close();
-        dir.deleteFile(std.fs.path.basename(self.lock_path)) catch {};
+        var dir = std.Io.Dir.openDirAbsolute(std.Options.debug_io, dir_name, .{}) catch return;
+        defer dir.close(std.Options.debug_io);
+        dir.deleteFile(std.Options.debug_io, std.fs.path.basename(self.lock_path)) catch {};
     }
 };
 
@@ -213,8 +213,8 @@ pub const SweepResult = struct {
 };
 
 pub fn resolveLayout(alloc: Allocator, opts: LayoutOptions) !Layout {
-    const now_seconds = opts.now_seconds orelse std.time.timestamp();
-    const root = try std.fs.realpathAlloc(alloc, opts.root);
+    const now_seconds = opts.now_seconds orelse std.Io.Timestamp.now(std.Options.debug_io, .real).toSeconds();
+    const root = try std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, opts.root, alloc);
     errdefer alloc.free(root);
 
     const project_slug = if (opts.project_slug_override) |value|
@@ -358,7 +358,12 @@ pub fn createRunMeta(alloc: Allocator, opts: CreateRunOptions) !RunMeta {
 }
 
 pub fn loadMetaAbsolute(alloc: Allocator, meta_path: []const u8) !RunMeta {
-    const content = try std.fs.cwd().readFileAlloc(alloc, meta_path, 256 * 1024);
+    const content = try std.Io.Dir.cwd().readFileAlloc(
+        std.Options.debug_io,
+        meta_path,
+        alloc,
+        .limited(256 * 1024),
+    );
     defer alloc.free(content);
 
     var parsed = try std.json.parseFromSlice(DiskPayload, alloc, content, .{
@@ -396,13 +401,13 @@ pub fn sweepDeadRuns(alloc: Allocator, layout: *const Layout) !SweepResult {
 
     var result: SweepResult = .{};
 
-    var dir = try std.fs.openDirAbsolute(layout.project_artifacts_root, .{ .iterate = true });
-    defer dir.close();
+    var dir = try std.Io.Dir.openDirAbsolute(std.Options.debug_io, layout.project_artifacts_root, .{ .iterate = true });
+    defer dir.close(std.Options.debug_io);
 
     var walker = try dir.walk(alloc);
     defer walker.deinit();
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(std.Options.debug_io)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.path, ".meta.json")) continue;
 
@@ -429,7 +434,7 @@ pub fn sweepDeadRuns(alloc: Allocator, layout: *const Layout) !SweepResult {
 }
 
 pub fn pidAlive(pid: std.posix.pid_t) bool {
-    std.posix.kill(pid, 0) catch |err| switch (err) {
+    std.posix.kill(pid, @enumFromInt(0)) catch |err| switch (err) {
         error.ProcessNotFound => return false,
         error.PermissionDenied => return true,
         else => return false,
@@ -438,33 +443,27 @@ pub fn pidAlive(pid: std.posix.pid_t) bool {
 }
 
 fn defaultVibecraftedHome(alloc: Allocator) ![]const u8 {
-    if (std.process.getEnvVarOwned(alloc, "VIBECRAFTED_HOME")) |value| {
-        errdefer alloc.free(value);
+    if (try getenvOwned(alloc, "VIBECRAFTED_HOME")) |value| {
+        defer alloc.free(value);
         return ensureRealpathDir(alloc, value);
-    } else |err| switch (err) {
-        error.EnvironmentVariableNotFound => {},
-        else => return err,
     }
 
-    const home = try std.process.getEnvVarOwned(alloc, "HOME");
+    const home = (try getenvOwned(alloc, "HOME")) orelse return error.EnvironmentVariableNotFound;
     defer alloc.free(home);
     const joined = try std.fs.path.join(alloc, &.{ home, ".vibecrafted" });
     defer alloc.free(joined);
-    return std.fs.realpathAlloc(alloc, joined) catch |err| switch (err) {
+    return realpathAlloc(alloc, joined) catch |err| switch (err) {
         error.FileNotFound => blk: {
             try ensureDirAbsolute(joined);
-            break :blk try std.fs.realpathAlloc(alloc, joined);
+            break :blk try realpathAlloc(alloc, joined);
         },
         else => return err,
     };
 }
 
 fn deriveProjectSlug(alloc: Allocator, root: []const u8) ![]const u8 {
-    if (std.process.getEnvVarOwned(alloc, "VIBECRAFTED_PROJECT_SLUG")) |value| {
+    if (try getenvOwned(alloc, "VIBECRAFTED_PROJECT_SLUG")) |value| {
         return value;
-    } else |err| switch (err) {
-        error.EnvironmentVariableNotFound => {},
-        else => return err,
     }
 
     const maybe_remote = try gitRemoteOrigin(alloc, root);
@@ -480,21 +479,17 @@ fn deriveProjectSlug(alloc: Allocator, root: []const u8) ![]const u8 {
 }
 
 fn gitRemoteOrigin(alloc: Allocator, root: []const u8) !?[]const u8 {
-    var child = std.process.Child.init(&.{ "git", "-C", root, "remote", "get-url", "origin" }, alloc);
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
+    const result = std.process.run(alloc, std.Options.debug_io, .{
+        .argv = &.{ "git", "-C", root, "remote", "get-url", "origin" },
+        .stdout_limit = .limited(4 * 1024),
+        .stderr_limit = .limited(4 * 1024),
+    }) catch return null;
+    defer alloc.free(result.stdout);
+    defer alloc.free(result.stderr);
 
-    child.spawn() catch return null;
-
-    var stdout: std.ArrayListUnmanaged(u8) = .{};
-    defer stdout.deinit(alloc);
-    var stderr: std.ArrayListUnmanaged(u8) = .{};
-    defer stderr.deinit(alloc);
-    try child.collectOutput(alloc, &stdout, &stderr, 4 * 1024);
-    const term = try child.wait();
+    const term = result.term;
     switch (term) {
-        .Exited => |code| if (code == 0 and stdout.items.len > 0) return try alloc.dupe(u8, stdout.items),
+        .exited => |code| if (code == 0 and result.stdout.len > 0) return try alloc.dupe(u8, result.stdout),
         else => {},
     }
     return null;
@@ -514,24 +509,33 @@ fn parseOrgRepoRemote(alloc: Allocator, remote: []const u8) ![]const u8 {
 }
 
 fn ensureDirAbsolute(path: []const u8) !void {
-    std.fs.cwd().makePath(path) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDirPath(std.Options.debug_io, path) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
 }
 
 fn ensureRealpathDir(alloc: Allocator, path: []const u8) ![]const u8 {
-    return std.fs.realpathAlloc(alloc, path) catch |err| switch (err) {
+    return realpathAlloc(alloc, path) catch |err| switch (err) {
         error.FileNotFound => {
             try ensureDirAbsolute(path);
-            return std.fs.realpathAlloc(alloc, path);
+            return realpathAlloc(alloc, path);
         },
         else => return err,
     };
 }
 
+fn realpathAlloc(alloc: Allocator, path: []const u8) ![:0]u8 {
+    return std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, path, alloc);
+}
+
+fn getenvOwned(alloc: Allocator, name: [*:0]const u8) !?[]u8 {
+    const value = std.c.getenv(name) orelse return null;
+    return try alloc.dupe(u8, std.mem.sliceTo(value, 0));
+}
+
 fn pathExists(path: []const u8) bool {
-    std.fs.accessAbsolute(path, .{}) catch return false;
+    std.Io.Dir.accessAbsolute(std.Options.debug_io, path, .{}) catch return false;
     return true;
 }
 
@@ -556,18 +560,20 @@ fn writeFileAtomic(path: []const u8, mode: u16, data: []const u8) !void {
     const dir_name = std.fs.path.dirname(path) orelse return error.BadPathName;
     const base_name = std.fs.path.basename(path);
 
-    var dir = try std.fs.openDirAbsolute(dir_name, .{});
-    defer dir.close();
+    var dir = try std.Io.Dir.openDirAbsolute(std.Options.debug_io, dir_name, .{});
+    defer dir.close(std.Options.debug_io);
 
     var write_buffer: [4096]u8 = undefined;
-    var atomic_file = try dir.atomicFile(base_name, .{
-        .mode = mode,
-        .write_buffer = &write_buffer,
+    var atomic_file = try dir.createFileAtomic(std.Options.debug_io, base_name, .{
+        .permissions = @enumFromInt(mode),
+        .replace = true,
     });
-    defer atomic_file.deinit();
+    defer atomic_file.deinit(std.Options.debug_io);
 
-    try atomic_file.file_writer.interface.writeAll(data);
-    try atomic_file.finish();
+    var file_writer = atomic_file.file.writer(std.Options.debug_io, &write_buffer);
+    try file_writer.interface.writeAll(data);
+    try file_writer.flush();
+    try atomic_file.replace(std.Options.debug_io);
 }
 
 fn formatDayStamp(alloc: Allocator, now_seconds: i64) ![]const u8 {

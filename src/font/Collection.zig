@@ -210,7 +210,7 @@ pub const EntryError = error{
 pub fn getEntry(self: *Collection, index: Index) EntryError!*Entry {
     if (index.special() != null) return error.SpecialHasNoFace;
     const list = self.faces.getPtr(index.style);
-    if (index.idx >= list.len) return error.IndexOutOfBounds;
+    if (index.idx >= list.count()) return error.IndexOutOfBounds;
     return list.at(index.idx).getEntry();
 }
 
@@ -694,7 +694,42 @@ pub fn updateMetrics(self: *Collection) UpdateMetricsError!void {
 ///
 /// WARNING: We cannot use any prealloc yet for the segmented list because
 /// the collection is copied around by value and pointers aren't stable.
-const StyleArray = std.EnumArray(Style, std.SegmentedList(EntryOrAlias, 0));
+const EntryList = struct {
+    items: std.ArrayListUnmanaged(EntryOrAlias) = .empty,
+
+    fn append(self: *EntryList, alloc: Allocator, value: EntryOrAlias) Allocator.Error!void {
+        try self.items.append(alloc, value);
+    }
+
+    fn count(self: EntryList) usize {
+        return self.items.items.len;
+    }
+
+    fn at(self: *EntryList, index: usize) *EntryOrAlias {
+        return &self.items.items[index];
+    }
+
+    fn deinit(self: *EntryList, alloc: Allocator) void {
+        self.items.deinit(alloc);
+    }
+
+    fn iterator(self: *EntryList, start: usize) Iterator {
+        return .{ .items = self.items.items, .index = start };
+    }
+
+    const Iterator = struct {
+        items: []EntryOrAlias,
+        index: usize,
+
+        fn next(self: *Iterator) ?*EntryOrAlias {
+            if (self.index >= self.items.len) return null;
+            defer self.index += 1;
+            return &self.items[self.index];
+        }
+    };
+};
+
+const StyleArray = std.EnumArray(Style, EntryList);
 
 /// Load options are used to configure all the details a Collection
 /// needs to load deferred faces.
@@ -894,7 +929,7 @@ pub const Index = packed struct(Index.Backing) {
 
     /// The number of bits we use for the index.
     const idx_bits = backing_bits - @typeInfo(@typeInfo(Style).@"enum".tag_type).int.bits;
-    pub const IndexInt = @Type(.{ .int = .{ .signedness = .unsigned, .bits = idx_bits } });
+    pub const IndexInt = @Int(.unsigned, idx_bits);
 
     /// The special-case fonts that we support.
     pub const Special = enum(IndexInt) {

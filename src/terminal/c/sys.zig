@@ -150,6 +150,23 @@ const LogEmitter = struct {
     scope_text: []const u8,
     buf: [2048]u8 = undefined,
     pos: usize = 0,
+    writer: std.Io.Writer = .{
+        .vtable = &.{ .drain = drain },
+        .buffer = &.{},
+    },
+
+    fn drain(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        const self: *LogEmitter = @alignCast(@fieldParentPtr("writer", w));
+        const slice = data[0 .. data.len - 1];
+        const pattern = data[slice.len];
+        var written: usize = pattern.len * splat;
+        for (slice) |bytes| {
+            _ = self.write(bytes) catch unreachable;
+            written += bytes.len;
+        }
+        for (0..splat) |_| _ = self.write(pattern) catch unreachable;
+        return written;
+    }
 
     fn write(self: *@This(), bytes: []const u8) error{}!usize {
         var remaining = bytes;
@@ -201,13 +218,7 @@ pub fn logFn(
         .c_level = c_level,
         .scope_text = scope_text,
     };
-    const writer: std.io.GenericWriter(
-        *LogEmitter,
-        error{},
-        LogEmitter.write,
-    ) = .{ .context = &ctx };
-
-    nosuspend writer.print(format, args) catch {};
+    nosuspend ctx.writer.print(format, args) catch {};
     ctx.flush();
 }
 
@@ -216,7 +227,7 @@ pub fn logFn(
 /// Formats each message as "[level](scope): message\n". Can be passed
 /// directly to ghostty_sys_set(GHOSTTY_SYS_OPT_LOG, &ghostty_sys_log_stderr).
 ///
-/// Uses std.debug.lockStderrWriter for thread-safe, mutex-protected output.
+/// Uses std.debug.lockStderr for thread-safe, mutex-protected output.
 /// On freestanding/wasm targets this is a no-op (no stderr available).
 pub fn logStderr(
     _: ?*anyopaque,
@@ -239,8 +250,9 @@ pub fn logStderr(
     };
 
     var buffer: [64]u8 = undefined;
-    const writer = std.debug.lockStderrWriter(&buffer);
-    defer std.debug.unlockStderrWriter();
+    var stderr = std.debug.lockStderr(&buffer);
+    defer std.debug.unlockStderr();
+    const writer = &stderr.file_writer.interface;
     nosuspend {
         if (scope.len > 0) {
             writer.print("[{s}]({s}): {s}\n", .{ level_text, scope, message }) catch {};

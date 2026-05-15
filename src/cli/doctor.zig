@@ -39,7 +39,7 @@ const Check = struct {
 
 const Report = struct {
     alloc: Allocator,
-    checks: std.ArrayListUnmanaged(Check) = .{},
+    checks: std.ArrayListUnmanaged(Check) = .empty,
 
     fn deinit(self: *Report) void {
         for (self.checks.items) |check| {
@@ -255,7 +255,7 @@ fn collectBundledAssets(
     }
 
     if (layout.skills_dir) |skills_dir| {
-        if (std.fs.accessAbsolute(skills_dir, .{})) |_| {
+        if (std.Io.Dir.accessAbsolute(std.Options.debug_io, skills_dir, .{})) |_| {
             const summary = try std.fmt.allocPrint(
                 alloc,
                 "skills bundle detected at {s}",
@@ -281,7 +281,7 @@ fn collectBundledAssets(
     }
 
     if (layout.bundled_config_path) |bundled_config_path| {
-        if (std.fs.accessAbsolute(bundled_config_path, .{})) |_| {
+        if (std.Io.Dir.accessAbsolute(std.Options.debug_io, bundled_config_path, .{})) |_| {
             const summary = try std.fmt.allocPrint(
                 alloc,
                 "bundled config seed detected at {s}",
@@ -422,14 +422,14 @@ fn collectConfigWriteStatus(
     const probe_name = try std.fmt.allocPrint(
         alloc,
         ".vc-board-doctor-write-{d}.tmp",
-        .{std.time.nanoTimestamp()},
+        .{nowNanoseconds()},
     );
     defer alloc.free(probe_name);
 
     const probe_path = try std.fs.path.join(alloc, &.{ config_dir, probe_name });
     defer alloc.free(probe_path);
 
-    var probe = std.fs.createFileAbsolute(probe_path, .{ .exclusive = true }) catch |err| {
+    var probe = std.Io.Dir.createFileAbsolute(std.Options.debug_io, probe_path, .{ .exclusive = true }) catch |err| {
         const summary = try std.fmt.allocPrint(
             alloc,
             "config directory is not writable: {}",
@@ -444,8 +444,8 @@ fn collectConfigWriteStatus(
         );
         return;
     };
-    probe.close();
-    std.fs.deleteFileAbsolute(probe_path) catch {};
+    probe.close(std.Options.debug_io);
+    std.Io.Dir.deleteFileAbsolute(std.Options.debug_io, probe_path) catch {};
 
     const summary = try std.fmt.allocPrint(
         alloc,
@@ -457,7 +457,7 @@ fn collectConfigWriteStatus(
 }
 
 fn detectLayout(alloc: Allocator) !Layout {
-    const exe_path = try std.fs.selfExePathAlloc(alloc);
+    const exe_path = try selfExePathAlloc(alloc);
     defer alloc.free(exe_path);
     return detectLayoutForExePath(alloc, exe_path);
 }
@@ -544,12 +544,12 @@ fn looksLikeDevZigOut(alloc: Allocator, root_dir: []const u8) !bool {
     const repo_root = std.fs.path.dirname(root_dir) orelse return false;
     const build_zig_path = try std.fs.path.join(alloc, &.{ repo_root, "build.zig" });
     defer alloc.free(build_zig_path);
-    std.fs.accessAbsolute(build_zig_path, .{}) catch return false;
+    std.Io.Dir.accessAbsolute(std.Options.debug_io, build_zig_path, .{}) catch return false;
 
     const src_dir_path = try std.fs.path.join(alloc, &.{ repo_root, "src" });
     defer alloc.free(src_dir_path);
-    var src_dir = std.fs.openDirAbsolute(src_dir_path, .{}) catch return false;
-    src_dir.close();
+    var src_dir = std.Io.Dir.openDirAbsolute(std.Options.debug_io, src_dir_path, .{}) catch return false;
+    src_dir.close(std.Options.debug_io);
 
     return true;
 }
@@ -559,10 +559,12 @@ fn plistStringValue(
     plist_path: []const u8,
     key: []const u8,
 ) !?[]const u8 {
-    var file = try std.fs.openFileAbsolute(plist_path, .{});
-    defer file.close();
-
-    const contents = try file.readToEndAlloc(alloc, 1024 * 1024);
+    const contents = try std.Io.Dir.cwd().readFileAlloc(
+        std.Options.debug_io,
+        plist_path,
+        alloc,
+        .limited(1024 * 1024),
+    );
     defer alloc.free(contents);
 
     const key_prefix = try std.fmt.allocPrint(alloc, "<key>{s}</key>", .{key});
@@ -615,7 +617,7 @@ fn containsHelp(argv: []const []const u8) bool {
 
 fn renderText(report: Report, compact: bool) !void {
     var buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&buffer);
+    var stdout_writer = std.Io.File.stdout().writerStreaming(std.Options.debug_io, &buffer);
     const stdout = &stdout_writer.interface;
 
     if (compact) {
@@ -652,7 +654,7 @@ fn renderText(report: Report, compact: bool) !void {
 
 fn renderJson(report: Report) !void {
     var buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&buffer);
+    var stdout_writer = std.Io.File.stdout().writerStreaming(std.Options.debug_io, &buffer);
     const stdout = &stdout_writer.interface;
 
     try stdout.print("{{\"bundle_id\":{f},\"checks\":[", .{std.json.fmt(build_config.bundle_id, .{})});
@@ -677,7 +679,7 @@ fn renderJson(report: Report) !void {
 
 fn renderMarkdown(report: Report, compact: bool) !void {
     var buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&buffer);
+    var stdout_writer = std.Io.File.stdout().writerStreaming(std.Options.debug_io, &buffer);
     const stdout = &stdout_writer.interface;
 
     try stdout.writeAll("# vc-board doctor\n\n");
@@ -697,7 +699,7 @@ fn renderMarkdown(report: Report, compact: bool) !void {
 
 fn printHelp(mode: Mode) !void {
     var buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&buffer);
+    var stdout_writer = std.Io.File.stdout().writerStreaming(std.Options.debug_io, &buffer);
     const stdout = &stdout_writer.interface;
     try stdout.print(
         \\Usage: vc-board {s} [--json|--md]
@@ -712,15 +714,15 @@ fn printHelp(mode: Mode) !void {
 }
 
 fn isExecutableFile(path: []const u8) !bool {
-    var file = try std.fs.openFileAbsolute(path, .{});
-    defer file.close();
+    var file = try std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{});
+    defer file.close(std.Options.debug_io);
 
-    const stat = try file.stat();
+    const stat = try file.stat(std.Options.debug_io);
     if (stat.kind != .file) return false;
 
     return switch (builtin.os.tag) {
         .windows => true,
-        else => (stat.mode & 0o111) != 0,
+        else => (@intFromEnum(stat.permissions) & 0o111) != 0,
     };
 }
 
@@ -734,7 +736,7 @@ fn findOnPath(alloc: Allocator, name: []const u8) !?[]const u8 {
         const candidate = try std.fs.path.join(alloc, &.{ part, name });
         errdefer alloc.free(candidate);
 
-        if (std.fs.accessAbsolute(candidate, .{})) |_| {
+        if (std.Io.Dir.accessAbsolute(std.Options.debug_io, candidate, .{})) |_| {
             return candidate;
         } else |_| {
             alloc.free(candidate);
@@ -742,6 +744,27 @@ fn findOnPath(alloc: Allocator, name: []const u8) !?[]const u8 {
     }
 
     return null;
+}
+
+fn nowNanoseconds() i128 {
+    return std.Io.Timestamp.now(std.Options.debug_io, .real).toNanoseconds();
+}
+
+fn selfExePathAlloc(alloc: Allocator) ![]u8 {
+    if (comptime builtin.os.tag == .macos) {
+        var required: u32 = 0;
+        var tiny: [1]u8 = undefined;
+        _ = std.c._NSGetExecutablePath(&tiny, &required);
+
+        const raw_buf = try alloc.alloc(u8, required);
+        defer alloc.free(raw_buf);
+        if (std.c._NSGetExecutablePath(raw_buf.ptr, &required) != 0) return error.NameTooLong;
+
+        const raw = std.mem.sliceTo(raw_buf.ptr, 0);
+        return std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, raw, alloc) catch try alloc.dupe(u8, raw);
+    }
+
+    return error.Unsupported;
 }
 
 test "parse output mode" {

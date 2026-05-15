@@ -19,15 +19,12 @@ pub const c = @cImport({
     @cInclude("CoreText/CoreText.h");
     @cInclude("CoreVideo/CoreVideo.h");
     @cInclude("CoreVideo/CVPixelBuffer.h");
-    @cInclude("QuartzCore/CALayer.h");
     @cInclude("IOSurface/IOSurfaceRef.h");
     @cInclude("dispatch/dispatch.h");
     @cInclude("os/log.h");
     @cInclude("os/signpost.h");
 
-    if (builtin.os.tag == .macos) {
-        @cInclude("Carbon/Carbon.h");
-    }
+    _ = builtin;
 });
 
 test {

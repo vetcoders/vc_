@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const assert = @import("../quirks.zig").inlineAssert;
 const wuffs = @import("wuffs");
 const terminal = @import("../terminal/main.zig");
+const Instant = @import("../lib/main.zig").time.Instant;
 
 const Renderer = @import("../renderer.zig").Renderer;
 const GraphicsAPI = Renderer.API;
@@ -194,7 +195,7 @@ pub const State = struct {
 
         // For transmit time we always just use the current time
         // and overwrite the overlay.
-        const transmit_time = try std.time.Instant.now();
+        const transmit_time = try Instant.now();
 
         // Ensure we have space for our overlay placement. Do this before
         // we upload our image so we don't have to deal with cleaning
@@ -525,7 +526,7 @@ pub const State = struct {
         self: *State,
         alloc: Allocator,
         id: Id,
-        transmit_time: std.time.Instant,
+        transmit_time: Instant,
         pending: Image.Pending,
     ) PrepImageError!void {
         // If this image exists and its transmit time is the same we assume
@@ -688,7 +689,7 @@ pub const Id = union(enum) {
 /// The map used for storing images.
 pub const ImageMap = std.AutoHashMapUnmanaged(Id, struct {
     image: Image,
-    transmit_time: std.time.Instant,
+    transmit_time: Instant,
 });
 
 /// The state for a single image that is to be rendered.

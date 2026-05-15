@@ -182,19 +182,19 @@ fn parseGetSetAnsiColor(
         // Parse the color.
         const target: Target = switch (op) {
             // OSC5 maps directly to the Special enum.
-            .osc_5 => .{ .special = std.meta.intToEnum(
+            .osc_5 => .{ .special = enumFromInt(
                 SpecialColor,
                 std.math.cast(u3, color) orelse return result,
-            ) catch return result },
+            ) orelse return result },
 
             // OSC4 maps 0-255 to palette, 256-259 to special offset
             // by the palette count.
             .osc_4 => if (std.math.cast(u8, color)) |idx| .{
                 .palette = idx,
-            } else .{ .special = std.meta.intToEnum(
+            } else .{ .special = enumFromInt(
                 SpecialColor,
                 std.math.cast(u3, color - 256) orelse return result,
-            ) catch return result },
+            ) orelse return result },
 
             else => comptime unreachable,
         };
@@ -255,19 +255,19 @@ fn parseResetAnsiColor(
         // Parse the color.
         const target: Target = switch (op) {
             // OSC105 maps directly to the Special enum.
-            .osc_105 => .{ .special = std.meta.intToEnum(
+            .osc_105 => .{ .special = enumFromInt(
                 SpecialColor,
                 std.math.cast(u3, color) orelse continue,
-            ) catch continue },
+            ) orelse continue },
 
             // OSC104 maps 0-255 to palette, 256-259 to special offset
             // by the palette count.
             .osc_104 => if (std.math.cast(u8, color)) |idx| .{
                 .palette = idx,
-            } else .{ .special = std.meta.intToEnum(
+            } else .{ .special = enumFromInt(
                 SpecialColor,
                 std.math.cast(u3, color - 256) orelse continue,
-            ) catch continue },
+            ) orelse continue },
 
             else => comptime unreachable,
         };
@@ -329,10 +329,43 @@ fn parseResetDynamicColor(
 /// The exact prealloc value is chosen arbitrarily assuming most
 /// color ops have very few. If we can get empirical data on more
 /// typical values we can switch to that.
-pub const List = std.SegmentedList(
-    Request,
-    2,
-);
+pub const List = struct {
+    items: std.ArrayListUnmanaged(Request) = .empty,
+
+    pub fn deinit(self: *List, alloc: Allocator) void {
+        self.items.deinit(alloc);
+    }
+
+    pub fn addOne(self: *List, alloc: Allocator) Allocator.Error!*Request {
+        return self.items.addOne(alloc);
+    }
+
+    pub fn count(self: *const List) usize {
+        return self.items.items.len;
+    }
+
+    pub fn at(self: *List, index: usize) *Request {
+        return &self.items.items[index];
+    }
+
+    pub fn constIterator(self: *const List, start: usize) ConstIterator {
+        return .{
+            .items = self.items.items,
+            .index = start,
+        };
+    }
+
+    pub const ConstIterator = struct {
+        items: []const Request,
+        index: usize,
+
+        pub fn next(self: *ConstIterator) ?*const Request {
+            if (self.index >= self.items.len) return null;
+            defer self.index += 1;
+            return &self.items[self.index];
+        }
+    };
+};
 
 /// A single operation related to the terminal color palette.
 pub const Request = union(enum) {
@@ -342,6 +375,13 @@ pub const Request = union(enum) {
     reset_palette,
     reset_special,
 };
+
+fn enumFromInt(comptime E: type, value: anytype) ?E {
+    inline for (@typeInfo(E).@"enum".fields) |field| {
+        if (field.value == value) return @field(E, field.name);
+    }
+    return null;
+}
 
 pub const Target = union(enum) {
     palette: u8,

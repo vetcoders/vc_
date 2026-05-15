@@ -41,7 +41,7 @@ pub const SkillDocument = struct {
 pub const Catalog = struct {
     allocator: Allocator,
     root_dir: []const u8,
-    skills: std.ArrayListUnmanaged(SkillSummary) = .{},
+    skills: std.ArrayListUnmanaged(SkillSummary) = .empty,
 
     pub fn deinit(self: *Catalog) void {
         for (self.skills.items) |skill| skill.deinit(self.allocator);
@@ -69,16 +69,13 @@ pub fn discoverRoot(alloc: Allocator, opts: DiscoverOptions) LoadError![]const u
         return validateAndDupeRoot(alloc, override);
     }
 
-    if (std.process.getEnvVarOwned(alloc, "VIBECRAFTED_SKILLS_DIR")) |env_path| {
+    if (try getenvOwned(alloc, "VIBECRAFTED_SKILLS_DIR")) |env_path| {
         errdefer alloc.free(env_path);
         return validateAndAdoptRoot(alloc, env_path);
-    } else |err| switch (err) {
-        error.EnvironmentVariableNotFound => {},
-        else => return err,
     }
 
     const env_candidates = [_]struct {
-        env_name: []const u8,
+        env_name: [*:0]const u8,
         suffix: []const []const u8,
     }{
         .{ .env_name = "VIBECRAFTED_HOME", .suffix = &.{"skills"} },
@@ -87,25 +84,22 @@ pub fn discoverRoot(alloc: Allocator, opts: DiscoverOptions) LoadError![]const u
     };
 
     inline for (env_candidates) |candidate| {
-        if (std.process.getEnvVarOwned(alloc, candidate.env_name)) |env_path| {
+        if (try getenvOwned(alloc, candidate.env_name)) |env_path| {
             defer alloc.free(env_path);
 
             const joined = try joinWithBase(alloc, env_path, candidate.suffix);
             defer alloc.free(joined);
 
             if (isSkillsRoot(joined)) {
-                return std.fs.realpathAlloc(alloc, joined);
+                return realpathAlloc(alloc, joined);
             }
-        } else |err| switch (err) {
-            error.EnvironmentVariableNotFound => {},
-            else => return err,
         }
     }
 
-    const cwd_abs = try std.fs.cwd().realpathAlloc(alloc, ".");
+    const cwd_abs = try realpathAlloc(alloc, ".");
     defer alloc.free(cwd_abs);
 
-    const exe_dir = std.fs.selfExeDirPathAlloc(alloc) catch null;
+    const exe_dir: ?[]u8 = null;
     defer if (exe_dir) |dir| alloc.free(dir);
 
     const candidates = [_][]const []const u8{
@@ -120,7 +114,7 @@ pub fn discoverRoot(alloc: Allocator, opts: DiscoverOptions) LoadError![]const u
         const candidate = try std.fs.path.join(alloc, parts);
         defer alloc.free(candidate);
         if (isSkillsRoot(candidate)) {
-            return std.fs.realpathAlloc(alloc, candidate);
+            return realpathAlloc(alloc, candidate);
         }
     }
 
@@ -135,7 +129,7 @@ pub fn discoverRoot(alloc: Allocator, opts: DiscoverOptions) LoadError![]const u
             const candidate = try std.fs.path.join(alloc, parts);
             defer alloc.free(candidate);
             if (isSkillsRoot(candidate)) {
-                return std.fs.realpathAlloc(alloc, candidate);
+                return realpathAlloc(alloc, candidate);
             }
         }
     }
@@ -153,13 +147,13 @@ pub fn loadCatalog(alloc: Allocator, opts: DiscoverOptions) LoadError!Catalog {
     };
     errdefer catalog.deinit();
 
-    var skills_dir = try std.fs.openDirAbsolute(root_dir, .{ .iterate = true });
-    defer skills_dir.close();
+    var skills_dir = try std.Io.Dir.openDirAbsolute(std.Options.debug_io, root_dir, .{ .iterate = true });
+    defer skills_dir.close(std.Options.debug_io);
 
     var walk = try skills_dir.walk(alloc);
     defer walk.deinit();
 
-    while (try walk.next()) |entry| {
+    while (try walk.next(std.Options.debug_io)) |entry| {
         if (entry.kind != .file or !std.mem.eql(u8, entry.basename, "SKILL.md")) continue;
 
         const skill_doc_path = try std.fs.path.join(alloc, &.{ root_dir, entry.path });
@@ -194,7 +188,12 @@ pub fn loadByName(
 }
 
 pub fn loadDocumentAbsolute(alloc: Allocator, path: []const u8) LoadError!SkillDocument {
-    const content = try std.fs.cwd().readFileAlloc(alloc, path, 512 * 1024);
+    const content = try std.Io.Dir.cwd().readFileAlloc(
+        std.Options.debug_io,
+        path,
+        alloc,
+        .limited(512 * 1024),
+    );
     defer alloc.free(content);
 
     return parseDocument(alloc, path, content);
@@ -210,25 +209,34 @@ fn lessThanByName(_: void, a: SkillSummary, b: SkillSummary) bool {
 
 fn validateAndDupeRoot(alloc: Allocator, path: []const u8) LoadError![]const u8 {
     if (!isSkillsRoot(path)) return error.SkillsRootNotFound;
-    return std.fs.realpathAlloc(alloc, path);
+    return realpathAlloc(alloc, path);
 }
 
 fn validateAndAdoptRoot(alloc: Allocator, adopted: []u8) LoadError![]const u8 {
     if (!isSkillsRoot(adopted)) return error.SkillsRootNotFound;
     defer alloc.free(adopted);
-    return std.fs.realpathAlloc(alloc, adopted);
+    return realpathAlloc(alloc, adopted);
+}
+
+fn realpathAlloc(alloc: Allocator, path: []const u8) ![:0]u8 {
+    return std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, path, alloc);
+}
+
+fn getenvOwned(alloc: Allocator, name: [*:0]const u8) !?[]u8 {
+    const value = std.c.getenv(name) orelse return null;
+    return try alloc.dupe(u8, std.mem.sliceTo(value, 0));
 }
 
 fn isSkillsRoot(path: []const u8) bool {
     if (!pathExists(path)) return false;
 
-    var dir = std.fs.openDirAbsolute(path, .{ .iterate = true }) catch return false;
-    defer dir.close();
+    var dir = std.Io.Dir.openDirAbsolute(std.Options.debug_io, path, .{ .iterate = true }) catch return false;
+    defer dir.close(std.Options.debug_io);
 
     var walk = dir.walk(std.heap.page_allocator) catch return false;
     defer walk.deinit();
 
-    while (walk.next() catch return false) |entry| {
+    while (walk.next(std.Options.debug_io) catch return false) |entry| {
         if (entry.kind == .file and std.mem.eql(u8, entry.basename, "SKILL.md")) {
             return true;
         }
@@ -242,7 +250,7 @@ fn joinWithBase(
     base: []const u8,
     suffix: []const []const u8,
 ) LoadError![]const u8 {
-    var parts: std.ArrayList([]const u8) = .{};
+    var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(alloc);
 
     try parts.append(alloc, base);
@@ -270,7 +278,7 @@ fn skillPathStem(relative_path: []const u8) []const u8 {
 }
 
 fn pathExists(path: []const u8) bool {
-    std.fs.accessAbsolute(path, .{}) catch return false;
+    std.Io.Dir.accessAbsolute(std.Options.debug_io, path, .{}) catch return false;
     return true;
 }
 
@@ -284,7 +292,7 @@ fn parseDocument(alloc: Allocator, path: []const u8, content: []const u8) LoadEr
         .version = if (parsed.version) |version| try alloc.dupe(u8, version) else null,
         .description = try alloc.dupe(u8, parsed.description orelse ""),
         .path = try alloc.dupe(u8, path),
-        .body = try alloc.dupe(u8, std.mem.trimLeft(u8, content[parsed.body_start..], "\r\n")),
+        .body = try alloc.dupe(u8, std.mem.trimStart(u8, content[parsed.body_start..], "\r\n")),
     };
 }
 
@@ -312,13 +320,13 @@ fn parseFrontmatter(alloc: Allocator, content: []const u8) LoadError!ParsedFront
     var parsed: ParsedFrontmatter = .{};
     errdefer parsed.deinit(alloc);
 
-    var description_lines = std.ArrayListUnmanaged(u8){};
+    var description_lines: std.ArrayListUnmanaged(u8) = .empty;
     defer description_lines.deinit(alloc);
 
     var iter = std.mem.splitScalar(u8, frontmatter, '\n');
     var capturing_description = false;
     while (iter.next()) |raw_line| {
-        const line = std.mem.trimRight(u8, raw_line, "\r");
+        const line = std.mem.trimEnd(u8, raw_line, "\r");
         if (capturing_description) {
             if (line.len == 0) {
                 if (description_lines.items.len > 0 and description_lines.items[description_lines.items.len - 1] != '\n') {

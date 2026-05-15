@@ -18,6 +18,7 @@ const Library = font.Library;
 const opentype = @import("../opentype.zig");
 const quirks = @import("../../quirks.zig");
 const config = @import("../../config.zig");
+const thread = @import("../../lib/main.zig").thread;
 
 const F26Dot6 = opentype.sfnt.F26Dot6;
 
@@ -41,7 +42,7 @@ pub const Face = struct {
     ///
     /// This means that anywhere where `self.face.loadGlyph`
     /// is called, this mutex must be held.
-    ft_mutex: *std.Thread.Mutex,
+    ft_mutex: *thread.Mutex,
 
     /// Harfbuzz font corresponding to this face.
     hb_font: harfbuzz.Font,
@@ -99,7 +100,7 @@ pub const Face = struct {
         var hb_font = try harfbuzz.freetype.createFont(face.handle);
         errdefer hb_font.destroy();
 
-        const ft_mutex = try lib.alloc.create(std.Thread.Mutex);
+        const ft_mutex = try lib.alloc.create(thread.Mutex);
         errdefer lib.alloc.destroy(ft_mutex);
         ft_mutex.* = .{};
 

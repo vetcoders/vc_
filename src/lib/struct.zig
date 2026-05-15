@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const reify = @import("reify.zig");
 const Target = @import("target.zig").Target;
 
 /// Create a struct type that is C ABI compatible from a Zig struct type.
@@ -27,16 +28,11 @@ pub fn Struct(
                     .type = field.type,
                     .default_value_ptr = field.default_value_ptr,
                     .is_comptime = field.is_comptime,
-                    .alignment = if (field.alignment > 0) field.alignment else @alignOf(field.type),
+                    .alignment = field.alignment orelse @alignOf(field.type),
                 };
             }
 
-            break :c @Type(.{ .@"struct" = .{
-                .layout = .@"extern",
-                .fields = &fields,
-                .decls = &.{},
-                .is_tuple = info.is_tuple,
-            } });
+            break :c reify.Struct(.@"extern", null, &fields);
         },
     };
 }

@@ -11,6 +11,7 @@ const PageList = @import("../PageList.zig");
 const Screen = @import("../Screen.zig");
 const LoadingImage = @import("graphics_image.zig").LoadingImage;
 const Image = @import("graphics_image.zig").Image;
+const Instant = @import("../../lib/main.zig").time.Instant;
 const Rect = @import("graphics_image.zig").Rect;
 const Command = command.Command;
 
@@ -526,7 +527,7 @@ pub const ImageStorage = struct {
         // bit is fine compared to the megabytes we're looking to save.
         const Candidate = struct {
             id: u32,
-            time: std.time.Instant,
+            time: Instant,
             used: bool,
         };
 

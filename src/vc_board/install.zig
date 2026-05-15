@@ -13,29 +13,36 @@ pub fn ensureDefaultConfig(alloc: Allocator) ![]const u8 {
     errdefer alloc.free(path);
 
     if (std.fs.path.dirname(path)) |dir| {
-        try std.fs.cwd().makePath(dir);
+        try std.Io.Dir.cwd().createDirPath(std.Options.debug_io, dir);
     }
 
-    var existing = std.fs.openFileAbsolute(path, .{ .mode = .read_write }) catch |err| switch (err) {
+    var existing = std.Io.Dir.openFileAbsolute(std.Options.debug_io, path, .{ .mode = .read_write }) catch |err| switch (err) {
         error.FileNotFound => null,
         else => return err,
     };
     if (existing) |*file| {
-        defer file.close();
+        defer file.close(std.Options.debug_io);
 
-        const stat = try file.stat();
+        const stat = try file.stat(std.Options.debug_io);
         if (stat.size == 0) {
-            try file.writeAll(default_config_contents);
+            try writeAll(file.*, default_config_contents);
         }
 
         return path;
     }
 
-    var file = try std.fs.createFileAbsolute(path, .{ .exclusive = true });
-    defer file.close();
-    try file.writeAll(default_config_contents);
+    var file = try std.Io.Dir.createFileAbsolute(std.Options.debug_io, path, .{ .exclusive = true });
+    defer file.close(std.Options.debug_io);
+    try writeAll(file, default_config_contents);
 
     return path;
+}
+
+fn writeAll(file: std.Io.File, data: []const u8) !void {
+    var buffer: [1024]u8 = undefined;
+    var writer = file.writerStreaming(std.Options.debug_io, &buffer);
+    try writer.interface.writeAll(data);
+    try writer.flush();
 }
 
 test "default config template is not empty" {

@@ -414,7 +414,16 @@ pub fn add(
     // C files
     step.root_module.link_libc = true;
     step.root_module.addIncludePath(b.path("src/stb"));
-    step.root_module.addCSourceFiles(.{ .files = &.{"src/stb/stb.c"} });
+    // Disable ubsan for MSVC: Zig's ubsan runtime cannot be bundled
+    // on Windows (LNK4229), leaving __ubsan_handle_* unresolved when
+    // the static archive is consumed by an external linker.
+    step.root_module.addCSourceFiles(.{
+        .files = &.{"src/stb/stb.c"},
+        .flags = if (step.rootModuleTarget().abi == .msvc)
+            &.{ "-fno-sanitize=undefined", "-fno-sanitize-trap=undefined" }
+        else
+            &.{},
+    });
     if (step.rootModuleTarget().os.tag == .linux) {
         step.root_module.addIncludePath(b.path("src/apprt/gtk"));
     }
@@ -442,11 +451,27 @@ pub fn add(
     }
 
     // Other dependencies, mostly pure Zig
+    const uucode_dep = b.lazyDependency("uucode", .{
+        .target = target,
+        .optimize = optimize,
+        .tables_path = self.uucode_tables,
+        .build_config_path = b.path("src/build/uucode_config.zig"),
+    });
     if (b.lazyDependency("opengl", .{})) |dep| {
         step.root_module.addImport("opengl", dep.module("opengl"));
     }
-    if (b.lazyDependency("vaxis", .{})) |dep| {
-        step.root_module.addImport("vaxis", dep.module("vaxis"));
+    if (b.lazyDependency("vaxis", .{
+        .target = target,
+        .optimize = optimize,
+        .external_uucode = true,
+        .tables_path = self.uucode_tables,
+        .build_config_path = b.path("src/build/uucode_config.zig"),
+    })) |dep| {
+        const vaxis = dep.module("vaxis");
+        if (uucode_dep) |uucode| {
+            vaxis.addImport("uucode", uucode.module("uucode"));
+        }
+        step.root_module.addImport("vaxis", vaxis);
     }
     if (b.lazyDependency("wuffs", .{
         .target = target,
@@ -466,7 +491,9 @@ pub fn add(
     })) |dep| {
         step.root_module.addImport("z2d", dep.module("z2d"));
     }
-    self.addUucode(b, step.root_module, target, optimize);
+    if (uucode_dep) |uucode| {
+        step.root_module.addImport("uucode", uucode.module("uucode"));
+    }
     if (b.lazyDependency("zf", .{
         .target = target,
         .optimize = optimize,
@@ -765,6 +792,7 @@ pub fn addSimd(
         if (b.lazyDependency("simdutf", .{
             .target = target,
             .optimize = optimize,
+            .no_libcxx = true,
         })) |simdutf_dep| {
             m.linkLibrary(simdutf_dep.artifact("simdutf"));
             if (static_libs) |v| try v.append(
@@ -788,18 +816,6 @@ pub fn addSimd(
                 highway_dep.artifact("highway").getEmittedBin(),
             );
         }
-    }
-
-    // utfcpp - This is used as a dependency on our hand-written C++ code
-    if (b.lazyDependency("utfcpp", .{
-        .target = target,
-        .optimize = optimize,
-    })) |utfcpp_dep| {
-        m.linkLibrary(utfcpp_dep.artifact("utfcpp"));
-        if (static_libs) |v| try v.append(
-            b.allocator,
-            utfcpp_dep.artifact("utfcpp").getEmittedBin(),
-        );
     }
 
     // SIMD C++ files
@@ -842,10 +858,19 @@ pub fn addSimd(
             "-DHWY_NO_LIBCXX",
         );
 
-        // Disable ubsan for MSVC to avoid undefined references to
-        // __ubsan_handle_* symbols that require a runtime we don't link
-        // and bundle. Hopefully we can fix this one day since ubsan is nice!
-        if (target.result.abi == .msvc) try flags.appendSlice(b.allocator, &.{
+        // When using the vendored simdutf, build its headers in no-libcxx
+        // mode so we don't need C++ standard library headers at all.
+        // System simdutf headers may not support this define.
+        if (!b.systemIntegrationOption("simdutf", .{})) try flags.append(
+            b.allocator,
+            "-DSIMDUTF_NO_LIBCXX",
+        );
+
+        // Disable ubsan for Windows C/C++ objects to avoid undefined
+        // __ubsan_handle_* references. The Zig libraries on Windows don't
+        // currently bundle a matching UBSan runtime for these objects in
+        // our build configurations (this affects both MSVC and GNU ABIs).
+        if (target.result.os.tag == .windows) try flags.appendSlice(b.allocator, &.{
             "-fno-sanitize=undefined",
             "-fno-sanitize-trap=undefined",
         });

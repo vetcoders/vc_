@@ -1,4 +1,5 @@
 const std = @import("std");
+const reify = @import("reify.zig");
 const Target = @import("target.zig").Target;
 
 /// Create an enum type with the given keys that is C ABI compatible
@@ -47,15 +48,14 @@ pub fn Enum(
     }
 
     // Assigned to var so that the type name is nicer in stack traces.
-    const Result = @Type(.{ .@"enum" = .{
-        .tag_type = switch (target) {
+    const Result = reify.Enum(
+        switch (target) {
             .c => c_int,
             .zig => std.math.IntFittingRange(0, fields_i - 1),
         },
-        .fields = fields[0..fields_i],
-        .decls = &.{},
-        .is_exhaustive = true,
-    } });
+        .exhaustive,
+        fields[0..fields_i],
+    );
     return Result;
 }
 

@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const reify = @import("reify.zig");
 const Target = @import("target.zig").Target;
 
 /// Create a tagged union type that supports a C ABI and maintains
@@ -87,12 +88,7 @@ pub fn TaggedUnion(
                 .alignment = @alignOf(Padding),
             };
 
-            break :cvalue @Type(.{ .@"union" = .{
-                .layout = .@"extern",
-                .tag_type = null,
-                .fields = &union_fields,
-                .decls = &.{},
-            } });
+            break :cvalue reify.Union(.@"extern", null, &union_fields);
         };
 
         /// Convert to C union.

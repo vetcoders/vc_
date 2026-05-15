@@ -11,6 +11,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
+    module.addIncludePath(b.path("include"));
 
     const lib = b.addLibrary(.{
         .name = "macos",
@@ -20,6 +21,7 @@ pub fn build(b: *std.Build) !void {
         }),
         .linkage = .static,
     });
+    lib.root_module.addIncludePath(b.path("include"));
 
     lib.root_module.addCSourceFile(.{
         .file = b.path("os/zig_macos.c"),
@@ -46,6 +48,18 @@ pub fn build(b: *std.Build) !void {
         module.linkFramework("CoreVideo", .{});
         module.linkFramework("QuartzCore", .{});
         module.linkFramework("IOSurface", .{});
+
+        // Xcode 26's umbrella headers include nested framework headers such
+        // as <AE/AE.h> and <ATS/ATS.h>; expose those roots to clang.
+        const sdk_frameworks = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/System/Library/Frameworks";
+        const nested_framework_roots = [_][]const u8{
+            sdk_frameworks ++ "/CoreServices.framework/Frameworks",
+            sdk_frameworks ++ "/ApplicationServices.framework/Frameworks",
+        };
+        for (nested_framework_roots) |nested_frameworks| {
+            module.addSystemFrameworkPath(.{ .cwd_relative = nested_frameworks });
+            lib.root_module.addSystemFrameworkPath(.{ .cwd_relative = nested_frameworks });
+        }
 
         try apple_sdk.addPaths(b, lib);
     }

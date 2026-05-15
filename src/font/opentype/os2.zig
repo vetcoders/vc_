@@ -350,19 +350,19 @@ pub const OS2 = struct {
     /// Parse the table from raw data.
     pub fn init(data: []const u8) error{
         EndOfStream,
+        ReadFailed,
         OS2VersionNotSupported,
     }!OS2 {
-        var fbs = std.io.fixedBufferStream(data);
-        const reader = fbs.reader();
+        var reader: std.Io.Reader = .fixed(data);
 
-        const version = try reader.readInt(sfnt.uint16, .big);
+        const version = try reader.takeInt(sfnt.uint16, .big);
 
         // Return to the start, cause the version is part of the struct.
-        try fbs.seekTo(0);
+        reader.seek = 0;
 
         switch (version) {
             5 => {
-                const table = try reader.readStructEndian(OS2v5, .big);
+                const table = try reader.takeStruct(OS2v5, .big);
                 return .{
                     .version = table.version,
                     .xAvgCharWidth = table.xAvgCharWidth,
@@ -406,7 +406,7 @@ pub const OS2 = struct {
                 };
             },
             4, 3, 2 => {
-                const table = try reader.readStructEndian(OS2v4_3_2, .big);
+                const table = try reader.takeStruct(OS2v4_3_2, .big);
                 return .{
                     .version = table.version,
                     .xAvgCharWidth = table.xAvgCharWidth,
@@ -448,7 +448,7 @@ pub const OS2 = struct {
                 };
             },
             1 => {
-                const table = try reader.readStructEndian(OS2v1, .big);
+                const table = try reader.takeStruct(OS2v1, .big);
                 return .{
                     .version = table.version,
                     .xAvgCharWidth = table.xAvgCharWidth,
@@ -485,7 +485,7 @@ pub const OS2 = struct {
                 };
             },
             0 => {
-                const table = try reader.readStructEndian(OS2v0, .big);
+                const table = try reader.takeStruct(OS2v0, .big);
                 return .{
                     .version = table.version,
                     .xAvgCharWidth = table.xAvgCharWidth,

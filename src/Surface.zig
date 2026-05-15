@@ -33,6 +33,8 @@ const configpkg = @import("config.zig");
 const Duration = configpkg.Config.Duration;
 const input = @import("input.zig");
 const App = @import("App.zig");
+const Instant = @import("lib/main.zig").time.Instant;
+const thread = @import("lib/main.zig").thread;
 const internal_os = @import("os/main.zig");
 const inspectorpkg = @import("inspector/main.zig");
 const SurfaceMouse = @import("surface_mouse.zig");
@@ -168,13 +170,13 @@ readonly: bool = false,
 /// precision timestamp. It does not necessarily need to correspond to the
 /// actual time, but we must be able to compare two subsequent timestamps to get
 /// the wall clock time that has elapsed between timestamps.
-command_timer: ?std.time.Instant = null,
+command_timer: ?Instant = null,
 
 /// Search state
 search: ?Search = null,
 
 /// Used to rate limit BEL handling.
-last_bell_time: ?std.time.Instant = null,
+last_bell_time: ?Instant = null,
 
 /// The effect of an input event. This can be used by callers to take
 /// the appropriate action after an input event. For example, key
@@ -239,7 +241,7 @@ const Mouse = struct {
     /// The left click time was the last time the left click was done. This
     /// is always set on the first left click.
     left_click_count: u8 = 0,
-    left_click_time: std.time.Instant = undefined,
+    left_click_time: Instant = undefined,
 
     /// The last x/y sent for mouse reports.
     event_point: ?terminal.point.Coordinate = null,
@@ -311,6 +313,7 @@ const DerivedConfig = struct {
     clipboard_codepoint_map: configpkg.Config.RepeatableClipboardCodepointMap,
     copy_on_select: configpkg.CopyOnSelect,
     right_click_action: configpkg.RightClickAction,
+    middle_click_action: configpkg.MiddleClickAction,
     confirm_close_surface: configpkg.ConfirmCloseSurface,
     cursor_click_to_move: bool,
     desktop_notifications: bool,
@@ -389,6 +392,7 @@ const DerivedConfig = struct {
             .clipboard_codepoint_map = try config.@"clipboard-codepoint-map".clone(alloc),
             .copy_on_select = config.@"copy-on-select",
             .right_click_action = config.@"right-click-action",
+            .middle_click_action = config.@"middle-click-action",
             .confirm_close_surface = config.@"confirm-close-surface",
             .cursor_click_to_move = config.@"cursor-click-to-move",
             .desktop_notifications = config.@"desktop-notifications",
@@ -566,7 +570,7 @@ pub fn init(
     errdefer renderer_impl.deinit();
 
     // The mutex used to protect our renderer state.
-    const mutex = try alloc.create(std.Thread.Mutex);
+    const mutex = try alloc.create(thread.Mutex);
     mutex.* = .{};
     errdefer alloc.destroy(mutex);
 
@@ -639,7 +643,7 @@ pub fn init(
             // If an error occurs, we don't want to block surface startup.
             log.warn("error getting env map for surface err={}", .{err});
             break :env internal_os.getEnvMap(alloc) catch
-                std.process.EnvMap.init(alloc);
+                std.process.Environ.Map.init(alloc);
         };
         errdefer env.deinit();
 
@@ -1102,7 +1106,7 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
         .password_input => |v| try self.passwordInput(v),
 
         .ring_bell => bell: {
-            const now = std.time.Instant.now() catch unreachable;
+            const now = Instant.now() catch unreachable;
             if (self.last_bell_time) |last| {
                 if (now.since(last) < 100 * std.time.ns_per_ms) break :bell;
             }
@@ -1136,7 +1140,7 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
         },
 
         .stop_command => |v| timer: {
-            const end: std.time.Instant = try .now();
+            const end: Instant = try .now();
             const start = self.command_timer orelse break :timer;
             self.command_timer = null;
 
@@ -3422,19 +3426,23 @@ pub fn scrollCallback(
         const yoff_adjusted: f64 = if (scroll_mods.precision)
             yoff * self.config.mouse_scroll_multiplier.precision
         else yoff_adjusted: {
-            // Round out the yoff to an absolute minimum of 1. macos tries to
-            // simulate precision scrolling with non precision events by
-            // ramping up the magnitude of the offsets as it detects faster
-            // scrolling. Single click (very slow) scrolls are reported with a
-            // magnitude of 0.1 which would normally require a few clicks
-            // before we register an actual scroll event (depending on cell
-            // height and the mouse_scroll_multiplier setting).
-            const yoff_max: f64 = if (yoff > 0)
-                @max(yoff, 1)
-            else
-                @min(yoff, -1);
+            if (comptime builtin.target.os.tag.isDarwin()) {
+                // Round out the yoff to an absolute minimum of 1. macos tries to
+                // simulate precision scrolling with non precision events by
+                // ramping up the magnitude of the offsets as it detects faster
+                // scrolling. Single click (very slow) scrolls are reported with a
+                // magnitude of 0.1 which would normally require a few clicks
+                // before we register an actual scroll event (depending on cell
+                // height and the mouse_scroll_multiplier setting).
+                const yoff_max: f64 = if (yoff > 0)
+                    @max(yoff, 1)
+                else
+                    @min(yoff, -1);
 
-            break :yoff_adjusted yoff_max * cell_size * self.config.mouse_scroll_multiplier.discrete;
+                break :yoff_adjusted yoff_max * cell_size * self.config.mouse_scroll_multiplier.discrete;
+            } else {
+                break :yoff_adjusted yoff * cell_size * self.config.mouse_scroll_multiplier.discrete;
+            }
         };
 
         // Add our previously saved pending amount to the offset to get the
@@ -3768,7 +3776,7 @@ pub fn mouseButtonCallback(
 
             // If we are within the interval that the click would register
             // an increment then we do not extend the selection.
-            if (std.time.Instant.now()) |now| {
+            if (Instant.now()) |now| {
                 const since = now.since(self.mouse.left_click_time);
                 if (since <= self.config.mouse_interval) {
                     // Click interval very short, we may be increasing
@@ -3821,6 +3829,8 @@ pub fn mouseButtonCallback(
         // clicked link will swallow the event.
         if (self.mouse.over_link) {
             const pos = try self.rt_surface.getCursorPos();
+            self.renderer_state.mutex.lock();
+            defer self.renderer_state.mutex.unlock();
             if (self.processLinks(pos)) |processed| {
                 if (processed) return true;
             } else |err| {
@@ -3932,7 +3942,7 @@ pub fn mouseButtonCallback(
         self.mouse.left_click_ypos = pos.y;
 
         // Setup our click counter and timer
-        if (std.time.Instant.now()) |now| {
+        if (Instant.now()) |now| {
             // If we have mouse clicks, then we check if the time elapsed
             // is less than and our interval and if so, increase the count.
             if (self.mouse.left_click_count > 0) {
@@ -4007,14 +4017,24 @@ pub fn mouseButtonCallback(
         }
     }
 
-    // Middle-click pastes from our selection clipboard
-    if (button == .middle and action == .press) {
-        const clipboard: apprt.Clipboard = if (self.rt_surface.supportsClipboard(.selection))
-            .selection
-        else
-            .standard;
-        _ = try self.startClipboardRequest(clipboard, .{ .paste = {} });
-    }
+    // Middle-click paste source follows copy-on-select: when copy-on-select
+    // targets the selection clipboard, middle-click reads from it; when
+    // copy-on-select targets the system clipboard, middle-click reads from
+    // that instead. Falls back to the standard clipboard on platforms that
+    // do not support the selection clipboard.
+    if (button == .middle and action == .press) switch (self.config.middle_click_action) {
+        .ignore => {},
+        .@"primary-paste" => {
+            const clipboard: apprt.Clipboard = switch (self.config.copy_on_select) {
+                .clipboard => .standard,
+                .true, .false => if (self.rt_surface.supportsClipboard(.selection))
+                    .selection
+                else
+                    .standard,
+            };
+            _ = try self.startClipboardRequest(clipboard, .{ .paste = {} });
+        },
+    };
 
     // Right-click down selects word for context menus. If the apprt
     // doesn't implement context menus this can be a bit weird but they
@@ -4295,7 +4315,9 @@ fn linkAtPin(
     const line = screen.selectLine(.{
         .pin = mouse_pin,
         .whitespace = null,
-        .semantic_prompt_boundary = false,
+        // Respect semantic prompt boundaries so link/path matching doesn't
+        // merge shell prompt content with the text beside it.
+        .semantic_prompt_boundary = true,
     }) orelse return null;
 
     var strmap: terminal.StringMap = undefined;
@@ -6167,7 +6189,7 @@ fn showDesktopNotification(self: *Surface, title: [:0]const u8, body: [:0]const 
     // how fast identical notifications can be sent sequentially.
     const hash_algorithm = std.hash.Wyhash;
 
-    const now = try std.time.Instant.now();
+    const now = try Instant.now();
 
     // Set a limit of one desktop notification per second so that the OS
     // doesn't kill us when we run out of resources.

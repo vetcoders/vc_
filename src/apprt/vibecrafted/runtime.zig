@@ -17,7 +17,7 @@ pub const Runtime = struct {
 
     pub fn printBanner() !void {
         var buffer: [256]u8 = undefined;
-        var stdout_writer = std.fs.File.stdout().writer(&buffer);
+        var stdout_writer = std.Io.File.stdout().writerStreaming(std.Options.debug_io, &buffer);
         const stdout = &stdout_writer.interface;
         try writeBanner(stdout);
         try stdout.flush();

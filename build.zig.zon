@@ -39,8 +39,8 @@
         },
         .uucode = .{
             // jacobsandlund/uucode
-            .url = "https://deps.files.ghostty.org/uucode-0.2.0-ZZjBPqZVVABQepOqZHR7vV_NcaN-wats0IB6o-Exj6m9.tar.gz",
-            .hash = "uucode-0.2.0-ZZjBPqZVVABQepOqZHR7vV_NcaN-wats0IB6o-Exj6m9",
+            .url = "git+https://github.com/jacobsandlund/uucode#faab8894d753207878283d523add01817e23b805",
+            .hash = "uucode-0.2.0-ZZjBPkJiVABQGPdyw9BOtU2sflHv3vovBzmYtPRj2hvm",
         },
         .zig_wayland = .{
             // codeberg ifreund/zig-wayland
@@ -76,7 +76,6 @@
         .opengl = .{ .path = "./pkg/opengl", .lazy = true },
         .sentry = .{ .path = "./pkg/sentry", .lazy = true },
         .simdutf = .{ .path = "./pkg/simdutf", .lazy = true },
-        .utfcpp = .{ .path = "./pkg/utfcpp", .lazy = true },
         .wuffs = .{ .path = "./pkg/wuffs", .lazy = true },
         .zlib = .{ .path = "./pkg/zlib", .lazy = true },
 
@@ -117,8 +116,8 @@
         .apple_sdk = .{ .path = "./pkg/apple-sdk" },
         .android_ndk = .{ .path = "./pkg/android-ndk" },
         .iterm2_themes = .{
-            .url = "https://deps.files.ghostty.org/ghostty-themes-release-20260323-152405-a2c7b60.tgz",
-            .hash = "N-V-__8AAL6FAwBDPampKgDjoxlJYDIn2jv0VaINS4W6CXJN",
+            .url = "https://deps.files.ghostty.org/ghostty-themes-release-20260427-153600-5e4d1de.tgz",
+            .hash = "N-V-__8AAG6jAwDWij8XfaQ0fy-HAQqvl1b6kZb4GfbHjbkZ",
             .lazy = true,
         },
     },

@@ -46,10 +46,9 @@ pub const Post = extern struct {
     maxMemType1: sfnt.uint32 align(1),
 
     /// Parse the table from raw data.
-    pub fn init(data: []const u8) error{EndOfStream}!Post {
-        var fbs = std.io.fixedBufferStream(data);
-        const reader = fbs.reader();
-        return try reader.readStructEndian(Post, .big);
+    pub fn init(data: []const u8) error{ EndOfStream, ReadFailed }!Post {
+        var reader: std.Io.Reader = .fixed(data);
+        return try reader.takeStruct(Post, .big);
     }
 };
 

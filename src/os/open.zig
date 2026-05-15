@@ -52,8 +52,8 @@ pub fn open(
     // In the snap on Linux the launcher exports LD_LIBRARY_PATH pointing at
     // the snap's bundled libraries. Leaking this into child process can
     // can be problematic, so let's drop it from the env
-    var snap_env: std.process.EnvMap = if (comptime build_config.snap) blk: {
-        var env = try std.process.getEnvMap(alloc);
+    var snap_env: std.process.Environ.Map = if (comptime build_config.snap) blk: {
+        var env = try std.process.Environ.createMap(.{ .block = .{ .slice = std.mem.span(std.c.environ) } }, alloc);
         env.remove("LD_LIBRARY_PATH");
         break :blk env;
     } else undefined;

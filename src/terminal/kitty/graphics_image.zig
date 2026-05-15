@@ -9,12 +9,25 @@ const fastmem = @import("../../fastmem.zig");
 const command = @import("graphics_command.zig");
 const PageList = @import("../PageList.zig");
 const sys = @import("../sys.zig");
+const Instant = @import("../../lib/main.zig").time.Instant;
 
 const temp_dir = struct {
     const TempDir = @import("../../os/TempDir.zig");
     const allocTmpDir = @import("../../os/file.zig").allocTmpDir;
     const freeTmpDir = @import("../../os/file.zig").freeTmpDir;
 };
+
+fn realpath(path: []const u8, out: *[std.fs.max_path_bytes]u8) ![]const u8 {
+    if (path.len >= std.fs.max_path_bytes) return error.NameTooLong;
+
+    var path_z: [std.fs.max_path_bytes:0]u8 = undefined;
+    @memcpy(path_z[0..path.len], path);
+    path_z[path.len] = 0;
+
+    const resolved = std.c.realpath(path_z[0..path.len :0].ptr, out) orelse
+        return error.RealpathFailed;
+    return std.mem.sliceTo(resolved, 0);
+}
 
 const log = std.log.scoped(.kitty_gfx);
 
@@ -34,7 +47,7 @@ pub const LoadingImage = struct {
     image: Image,
 
     /// The data that is being built up.
-    data: std.ArrayListUnmanaged(u8) = .{},
+    data: std.ArrayListUnmanaged(u8) = .empty,
 
     /// This is non-null when a transmit and display command is given
     /// so that we display the image after it is fully loaded.
@@ -134,7 +147,7 @@ pub const LoadingImage = struct {
         var abs_buf: [std.fs.max_path_bytes]u8 = undefined;
         const path = switch (t.medium) {
             .direct => unreachable, // handled above
-            .file, .temporary_file => posix.realpath(cmd.data, &abs_buf) catch |err| {
+            .file, .temporary_file => realpath(cmd.data, &abs_buf) catch |err| {
                 log.warn("failed to get absolute path: {}", .{err});
                 return error.InvalidData;
             },
@@ -159,8 +172,9 @@ pub const LoadingImage = struct {
         t: command.Transmission,
         path: []const u8,
     ) !void {
+        // android does not support POSIX shared memory.
         // windows is currently unsupported, does it support shm?
-        if (comptime builtin.target.os.tag == .windows) {
+        if (comptime builtin.abi.isAndroid() or builtin.target.os.tag == .windows) {
             return error.UnsupportedMedium;
         }
 
@@ -174,7 +188,7 @@ pub const LoadingImage = struct {
         var buf: [std.fs.max_path_bytes]u8 = undefined;
         const pathz = std.fmt.bufPrintZ(&buf, "{s}", .{path}) catch return error.InvalidData;
 
-        const fd = std.c.shm_open(pathz, @as(c_int, @bitCast(std.c.O{ .ACCMODE = .RDONLY })), 0);
+        const fd = std.c.shm_open(pathz, @as(c_int, @bitCast(std.c.O{ .ACCMODE = .RDONLY })), @as(std.c.mode_t, 0));
         switch (std.posix.errno(fd)) {
             .SUCCESS => {},
             else => |err| {
@@ -188,7 +202,11 @@ pub const LoadingImage = struct {
         // The size from stat on may be larger than our expected size because
         // shared memory has to be a multiple of the page size.
         const stat_size: usize = stat: {
-            const stat = std.posix.fstat(fd) catch |err| {
+            const file: std.Io.File = .{
+                .handle = fd,
+                .flags = .{ .nonblocking = false },
+            };
+            const stat = file.stat(std.Options.debug_io) catch |err| {
                 log.warn("unable to fstat shared memory {s}: {}", .{ path, err });
                 return error.InvalidData;
             };
@@ -221,7 +239,7 @@ pub const LoadingImage = struct {
         const map = std.posix.mmap(
             null,
             stat_size, // mmap always uses the stat size
-            std.c.PROT.READ,
+            .{ .READ = true },
             std.c.MAP{ .TYPE = .SHARED },
             fd,
             0,
@@ -269,6 +287,8 @@ pub const LoadingImage = struct {
             return error.InvalidData;
         }
 
+        const io = std.Options.debug_io;
+
         // Temporary file logic
         if (medium == .temporary_file) {
             if (!isPathInTempDir(path)) return error.TemporaryFileNotInTempDir;
@@ -277,19 +297,19 @@ pub const LoadingImage = struct {
             }
         }
         defer if (medium == .temporary_file) {
-            posix.unlink(path) catch |err| {
+            std.Io.Dir.cwd().deleteFile(io, path) catch |err| {
                 log.warn("failed to delete temporary file: {}", .{err});
             };
         };
 
-        var file = std.fs.cwd().openFile(path, .{}) catch |err| {
+        var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch |err| {
             log.warn("failed to open temporary file: {}", .{err});
             return error.InvalidData;
         };
-        defer file.close();
+        defer file.close(io);
 
         // File must be a regular file
-        if (file.stat()) |stat| {
+        if (file.stat(io)) |stat| {
             if (stat.kind != .file) {
                 log.warn("file is not a regular file kind={}", .{stat.kind});
                 return error.InvalidData;
@@ -299,15 +319,14 @@ pub const LoadingImage = struct {
             return error.InvalidData;
         }
 
+        var buf: [4096]u8 = undefined;
+        var buf_reader = file.reader(io, &buf);
         if (t.offset > 0) {
-            file.seekTo(@intCast(t.offset)) catch |err| {
+            buf_reader.seekTo(@intCast(t.offset)) catch |err| {
                 log.warn("failed to seek to offset {}: {}", .{ t.offset, err });
                 return error.InvalidData;
             };
         }
-
-        var buf: [4096]u8 = undefined;
-        var buf_reader = file.reader(&buf);
         const reader = &buf_reader.interface;
 
         // Read the file
@@ -329,17 +348,16 @@ pub const LoadingImage = struct {
     fn isPathInTempDir(path: []const u8) bool {
         if (std.mem.startsWith(u8, path, "/tmp")) return true;
         if (std.mem.startsWith(u8, path, "/dev/shm")) return true;
-        if (temp_dir.allocTmpDir(std.heap.page_allocator)) |dir| {
-            defer temp_dir.freeTmpDir(std.heap.page_allocator, dir);
-            if (std.mem.startsWith(u8, path, dir)) return true;
+        const dir = temp_dir.allocTmpDir(std.heap.page_allocator) catch return false;
+        defer temp_dir.freeTmpDir(std.heap.page_allocator, dir);
+        if (std.mem.startsWith(u8, path, dir)) return true;
 
-            // The temporary dir is sometimes a symlink. On macOS for
-            // example /tmp is /private/var/...
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
-            if (posix.realpath(dir, &buf)) |real_dir| {
-                if (std.mem.startsWith(u8, path, real_dir)) return true;
-            } else |_| {}
-        }
+        // The temporary dir is sometimes a symlink. On macOS for
+        // example /tmp is /private/var/...
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        if (realpath(dir, &buf)) |real_dir| {
+            if (std.mem.startsWith(u8, path, real_dir)) return true;
+        } else |_| {}
 
         return false;
     }
@@ -402,7 +420,7 @@ pub const LoadingImage = struct {
         }
 
         // Set our time
-        self.image.transmit_time = std.time.Instant.now() catch |err| {
+        self.image.transmit_time = Instant.now() catch |err| {
             log.warn("failed to get time: {}", .{err});
             return error.InternalError;
         };
@@ -492,7 +510,7 @@ pub const LoadingImage = struct {
 
         // Replace our data
         self.data.deinit(alloc);
-        self.data = .{};
+        self.data = .empty;
         try self.data.ensureUnusedCapacity(alloc, result.data.len);
         try self.data.appendSlice(alloc, result.data[0..result.data.len]);
 
@@ -512,7 +530,7 @@ pub const Image = struct {
     format: command.Transmission.Format = .rgb,
     compression: command.Transmission.Compression = .none,
     data: []const u8 = "",
-    transmit_time: std.time.Instant = undefined,
+    transmit_time: Instant = undefined,
 
     /// Set this to true if this image was loaded by a command that
     /// doesn't specify an ID or number, since such commands should

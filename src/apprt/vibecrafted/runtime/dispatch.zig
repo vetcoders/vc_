@@ -82,7 +82,7 @@ pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
     if (req.skill_name.len == 0) return error.FileNotFound;
     if (req.prompt_text != null and req.prompt_file != null) return error.PromptConflict;
 
-    const now_seconds = req.now_seconds orelse std.time.timestamp();
+    const now_seconds = req.now_seconds orelse std.Io.Timestamp.now(std.Options.debug_io, .real).toSeconds();
 
     var layout = try session.resolveLayout(alloc, .{
         .root = req.root,
@@ -115,7 +115,7 @@ pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
     var failure_stage: FailureStage = .prompt;
     var guard_armed = true;
     errdefer if (guard_armed) {
-        meta.reapGhost(failureReason(failure_stage), std.time.timestamp()) catch {};
+        meta.reapGhost(failureReason(failure_stage), unixTimestampSeconds()) catch {};
     };
 
     const prompt = try composeSkillPrompt(alloc, req, resolved.prompt_command);
@@ -125,35 +125,32 @@ pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
     var argv_buf: [4][]const u8 = undefined;
     const argv = buildAgentArgv(&argv_buf, req.agent, req.agent_binary_override, prompt);
 
-    var child = std.process.Child.init(argv, alloc);
-    child.cwd = layout.root;
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-
     failure_stage = .spawn;
-    try child.spawn();
+    var child = try std.process.spawn(std.Options.debug_io, .{
+        .argv = argv,
+        .cwd = .{ .path = layout.root },
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(std.Options.debug_io);
     const launcher_pid = childPid(&child);
     if (launcher_pid) |pid| try meta.markRunning(pid, now_seconds);
 
-    var stdout: std.ArrayListUnmanaged(u8) = .{};
-    defer stdout.deinit(alloc);
-    var stderr: std.ArrayListUnmanaged(u8) = .{};
-    defer stderr.deinit(alloc);
-
     failure_stage = .collect;
-    try child.collectOutput(alloc, &stdout, &stderr, 2 * 1024 * 1024);
+    const output = try collectOutput(alloc, &child, 2 * 1024 * 1024);
+    defer output.deinit(alloc);
     failure_stage = .wait;
-    const term = try child.wait();
+    const term = try child.wait(std.Options.debug_io);
     const exit_code = exitCode(term);
 
-    const transcript = try joinTranscript(alloc, stdout.items, stderr.items);
+    const transcript = try joinTranscript(alloc, output.stdout, output.stderr);
     defer alloc.free(transcript);
     try writeText(meta.transcript_path, transcript);
-    try writeText(meta.report_path, if (stdout.items.len > 0) stdout.items else transcript);
+    try writeText(meta.report_path, if (output.stdout.len > 0) output.stdout else transcript);
 
     failure_stage = .finish;
-    try meta.finish(exit_code, std.time.timestamp());
+    try meta.finish(exit_code, unixTimestampSeconds());
     guard_armed = false;
 
     return .{
@@ -166,6 +163,10 @@ pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
         .exit_code = exit_code,
         .reaped_runs = sweep.reaped,
     };
+}
+
+fn unixTimestampSeconds() i64 {
+    return std.Io.Timestamp.now(std.Options.debug_io, .real).toSeconds();
 }
 
 pub fn dispatchInit(alloc: Allocator, req: Request) !Result {
@@ -234,7 +235,7 @@ fn resolveSkill(alloc: Allocator, req: Request) !ResolvedSkill {
 }
 
 fn composeSkillPrompt(alloc: Allocator, req: Request, prompt_command: []const u8) ![]const u8 {
-    var out: std.io.Writer.Allocating = .init(alloc);
+    var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
 
     try out.writer.writeAll(prompt_command);
@@ -268,7 +269,12 @@ fn inputContext(
     prompt_file: ?[]const u8,
 ) !?[]const u8 {
     if (prompt_text) |value| return @as(?[]const u8, try alloc.dupe(u8, value));
-    if (prompt_file) |path| return @as(?[]const u8, try std.fs.cwd().readFileAlloc(alloc, path, 512 * 1024));
+    if (prompt_file) |path| return @as(?[]const u8, try std.Io.Dir.cwd().readFileAlloc(
+        std.Options.debug_io,
+        path,
+        alloc,
+        .limited(512 * 1024),
+    ));
     return null;
 }
 
@@ -312,19 +318,58 @@ fn buildAgentArgv(
 }
 
 fn childPid(child: *const std.process.Child) ?std.posix.pid_t {
-    const value = child.id;
-    return switch (@typeInfo(@TypeOf(value))) {
-        .optional => value,
-        else => value,
-    };
+    return child.id;
 }
 
 fn exitCode(term: std.process.Child.Term) i32 {
     return switch (term) {
-        .Exited => |code| @intCast(code),
-        .Signal => |sig| -@as(i32, @intCast(sig)),
+        .exited => |code| @intCast(code),
+        .signal => |sig| -@as(i32, @intCast(@intFromEnum(sig))),
         else => 1,
     };
+}
+
+const CollectedOutput = struct {
+    stdout: []u8,
+    stderr: []u8,
+
+    fn deinit(self: CollectedOutput, alloc: Allocator) void {
+        alloc.free(self.stdout);
+        alloc.free(self.stderr);
+    }
+};
+
+fn collectOutput(alloc: Allocator, child: *std.process.Child, max_bytes: usize) !CollectedOutput {
+    var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: std.Io.File.MultiReader = undefined;
+    multi_reader.init(
+        alloc,
+        std.Options.debug_io,
+        multi_reader_buffer.toStreams(),
+        &.{ child.stdout.?, child.stderr.? },
+    );
+    defer multi_reader.deinit();
+
+    const stdout_reader = multi_reader.reader(0);
+    const stderr_reader = multi_reader.reader(1);
+
+    while (multi_reader.fill(4096, .none)) |_| {
+        if (stdout_reader.buffered().len > max_bytes or stderr_reader.buffered().len > max_bytes) {
+            return error.StreamTooLong;
+        }
+    } else |err| switch (err) {
+        error.EndOfStream => {},
+        else => |e| return e,
+    }
+
+    try multi_reader.checkAnyError();
+
+    const stdout = try multi_reader.toOwnedSlice(0);
+    errdefer alloc.free(stdout);
+    const stderr = try multi_reader.toOwnedSlice(1);
+    errdefer alloc.free(stderr);
+
+    return .{ .stdout = stdout, .stderr = stderr };
 }
 
 fn joinTranscript(alloc: Allocator, stdout: []const u8, stderr: []const u8) ![]const u8 {
@@ -337,18 +382,20 @@ fn writeText(path: []const u8, data: []const u8) !void {
     const dir_name = std.fs.path.dirname(path) orelse return error.BadPathName;
     const base_name = std.fs.path.basename(path);
 
-    var dir = try std.fs.openDirAbsolute(dir_name, .{});
-    defer dir.close();
+    var dir = try std.Io.Dir.openDirAbsolute(std.Options.debug_io, dir_name, .{});
+    defer dir.close(std.Options.debug_io);
 
     var write_buffer: [4096]u8 = undefined;
-    var atomic_file = try dir.atomicFile(base_name, .{
-        .mode = if (comptime builtin.os.tag == .windows) 0 else 0o644,
-        .write_buffer = &write_buffer,
+    var atomic_file = try dir.createFileAtomic(std.Options.debug_io, base_name, .{
+        .permissions = @enumFromInt(if (comptime builtin.os.tag == .windows) 0 else 0o644),
+        .replace = true,
     });
-    defer atomic_file.deinit();
+    defer atomic_file.deinit(std.Options.debug_io);
 
-    try atomic_file.file_writer.interface.writeAll(data);
-    try atomic_file.finish();
+    var file_writer = atomic_file.file.writer(std.Options.debug_io, &write_buffer);
+    try file_writer.interface.writeAll(data);
+    try file_writer.flush();
+    try atomic_file.replace(std.Options.debug_io);
 }
 
 test "dispatchSkill writes prompt/report/meta and reuses sweep" {

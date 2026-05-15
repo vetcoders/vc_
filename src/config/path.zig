@@ -195,17 +195,17 @@ pub const Path = union(enum) {
             return;
         }
 
-        var dir = try std.fs.openDirAbsolute(base, .{});
-        defer dir.close();
+        var dir = try std.Io.Dir.openDirAbsolute(std.Options.debug_io, base, .{});
+        defer dir.close(std.Options.debug_io);
 
-        const abs = dir.realpath(path, &buf) catch |err| abs: {
+        const abs_len = dir.realPathFile(std.Options.debug_io, path, &buf) catch |err| abs: {
             if (err == error.FileNotFound) {
                 // The file doesn't exist. Try to resolve the relative path
                 // another way.
                 const resolved = try std.fs.path.resolve(arena_alloc, &.{ base, path });
                 defer arena_alloc.free(resolved);
                 @memcpy(buf[0..resolved.len], resolved);
-                break :abs buf[0..resolved.len];
+                break :abs resolved.len;
             }
 
             try diags.append(arena_alloc, .{
@@ -222,6 +222,7 @@ pub const Path = union(enum) {
 
             return;
         };
+        const abs = buf[0..abs_len];
 
         log.debug(
             "expanding file path relative={s} abs={s}",
@@ -357,7 +358,7 @@ pub const Path = union(enum) {
 /// be automatically expanded relative to the path of the config file (or the home
 /// directory).
 pub const RepeatablePath = struct {
-    value: std.ArrayListUnmanaged(Path) = .{},
+    value: std.ArrayListUnmanaged(Path) = .empty,
 
     pub fn parseCLI(self: *RepeatablePath, alloc: Allocator, input: ?[]const u8) ParseError!void {
         const item = try Path.parse(alloc, input) orelse {

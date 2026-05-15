@@ -74,9 +74,11 @@ pub const Surface = struct {
         _ = self;
     }
 
-    pub fn defaultTermioEnv(self: *Surface) !std.process.EnvMap {
+    pub fn defaultTermioEnv(self: *Surface) !std.process.Environ.Map {
         _ = self;
-        return try std.process.getEnvMap(std.heap.page_allocator);
+        return try std.process.Environ.createMap(.{
+            .block = .{ .slice = std.mem.span(std.c.environ) },
+        }, std.heap.page_allocator);
     }
 };
 

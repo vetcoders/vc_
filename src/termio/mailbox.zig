@@ -4,6 +4,7 @@ const xev = @import("../global.zig").xev;
 const renderer = @import("../renderer.zig");
 const termio = @import("../termio.zig");
 const BlockingQueue = @import("../datastruct/main.zig").BlockingQueue;
+const thread = @import("../lib/main.zig").thread;
 
 const log = std.log.scoped(.io_writer);
 
@@ -61,7 +62,7 @@ pub const Mailbox = union(enum) {
     pub fn send(
         self: *Mailbox,
         msg: termio.Message,
-        mutex: ?*std.Thread.Mutex,
+        mutex: ?*thread.Mutex,
     ) void {
         switch (self.*) {
             .spsc => |*mb| send: {

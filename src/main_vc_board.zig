@@ -6,18 +6,23 @@ const vc_dispatch = @import("cli/vc_dispatch.zig");
 const vc_skills = @import("cli/vc_skills.zig");
 const vc_install = @import("vc_board/install.zig");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
 
-    const argv = try std.process.argsAlloc(alloc);
-    defer std.process.argsFree(alloc, argv);
+    var argv_list: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer argv_list.deinit(alloc);
+
+    var arg_iter = std.process.Args.Iterator.init(init.minimal.args);
+    defer arg_iter.deinit();
+    while (arg_iter.next()) |arg| try argv_list.append(alloc, arg);
+    const argv = argv_list.items;
 
     const invoked_as = std.fs.path.basename(argv[0]);
     if (aliasSkillName(invoked_as)) |skill_name| {
         var stdout_buffer: [4096]u8 = undefined;
-        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+        var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buffer);
         const stdout = &stdout_writer.interface;
         defer stdout.flush() catch {};
 
@@ -34,7 +39,7 @@ pub fn main() !void {
         }
         if (std.mem.eql(u8, command, "skills")) {
             var stdout_buffer: [4096]u8 = undefined;
-            var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+            var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buffer);
             const stdout = &stdout_writer.interface;
             defer stdout.flush() catch {};
 
@@ -42,7 +47,7 @@ pub fn main() !void {
         }
         if (std.mem.eql(u8, command, "init")) {
             var stdout_buffer: [4096]u8 = undefined;
-            var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+            var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buffer);
             const stdout = &stdout_writer.interface;
             defer stdout.flush() catch {};
 
@@ -52,12 +57,12 @@ pub fn main() !void {
             std.mem.eql(u8, command, "-h") or
             std.mem.eql(u8, command, "help"))
         {
-            try printHelp();
+            try printHelp(init.io);
             return;
         }
 
         var stdout_buffer: [4096]u8 = undefined;
-        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+        var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buffer);
         const stdout = &stdout_writer.interface;
         defer stdout.flush() catch {};
 
@@ -84,9 +89,9 @@ test {
     _ = vc_skills;
 }
 
-fn printHelp() !void {
+fn printHelp(io: std.Io) !void {
     var buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&buffer);
+    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &buffer);
     const stdout = &stdout_writer.interface;
     try stdout.writeAll(
         \\Usage: vc-board [doctor|status|skills|<skill>] [--json|--md]
