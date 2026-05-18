@@ -64,11 +64,14 @@ test "vc-mux multiplexes clients, rewrites ids, caches initialize, and fans out 
         "--cmd",
         bin_paths.mock_server,
     };
+    // Discard mux stderr so debug prints don't trigger zig build's
+    // "failed command" noise on otherwise green test runs. Flip back to
+    // `.inherit` locally when debugging the mux runtime itself.
     var mux = try std.process.spawn(io, .{
         .argv = mux_argv,
         .stdin = .ignore,
         .stdout = .ignore,
-        .stderr = .inherit,
+        .stderr = .ignore,
     });
     defer mux.kill(io);
     defer std.Io.Dir.cwd().deleteFile(io, socket_path) catch {};
