@@ -4,6 +4,7 @@
 const std = @import("std");
 const testing = std.testing;
 const JsonRpc = @import("JsonRpc.zig");
+const ClientChannel = @import("State.zig").ClientChannel;
 
 const io = testing.io;
 
@@ -40,6 +41,42 @@ const Client = struct {
         return (try JsonRpc.Codec.readMessage(allocator, &self.reader.interface)) orelse error.MuxClosed;
     }
 };
+
+test "ClientChannel.deinit drains orphaned payloads when writer never recv'd them" {
+    const allocator = testing.allocator;
+
+    // Simulates the failure path: reader pushes notifications into the
+    // channel, but the writer thread died early (e.g. EPIPE on the client
+    // socket) so nothing ever drains the queue. Without ClientChannel.deinit,
+    // both the dup'd payloads and the ArrayList capacity leak for every
+    // disconnected client — testing.allocator surfaces both as failures.
+    var channel = ClientChannel{};
+    defer channel.deinit(allocator);
+
+    try channel.send(io, allocator, "{\"jsonrpc\":\"2.0\",\"method\":\"notify\",\"params\":{}}");
+    try channel.send(io, allocator, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}");
+
+    channel.close(io);
+}
+
+test "ClientChannel.deinit is a no-op when the writer drained the queue first" {
+    const allocator = testing.allocator;
+
+    // The happy path: writer recv'd both items and freed them, deinit just
+    // releases the backing capacity. Proves we don't double-free.
+    var channel = ClientChannel{};
+    defer channel.deinit(allocator);
+
+    try channel.send(io, allocator, "alpha");
+    try channel.send(io, allocator, "beta");
+
+    const first = try channel.recv(io);
+    allocator.free(first);
+    const second = try channel.recv(io);
+    allocator.free(second);
+
+    channel.close(io);
+}
 
 test "vc-mux multiplexes clients, rewrites ids, caches initialize, and fans out notifications" {
     const allocator = testing.allocator;

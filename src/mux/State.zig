@@ -57,6 +57,18 @@ pub const ClientChannel = struct {
         self.closed = true;
         self.cond.broadcast(io);
     }
+
+    // Drain any payloads still queued and free the backing capacity. Must be
+    // called after the writer thread has joined and the channel has been
+    // removed from State.clients, so no concurrent send/recv can race.
+    // The writer normally drains everything (recv returns queued items even
+    // after close), but if the writer died mid-loop those leftovers stay
+    // here — without this, both the orphan payloads and the ArrayList's
+    // backing buffer leak for every connect/disconnect cycle.
+    pub fn deinit(self: *ClientChannel, allocator: std.mem.Allocator) void {
+        for (self.queue.items) |payload| allocator.free(payload);
+        self.queue.deinit(allocator);
+    }
 };
 
 pub const State = struct {

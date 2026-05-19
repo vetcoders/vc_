@@ -178,6 +178,10 @@ pub const Runtime = struct {
         std.debug.print("Client {} started. Active clients: {}\n", .{ client_id, self.active_clients.load(.acquire) });
 
         var channel = ClientChannel{};
+        // LIFO: deinit (declared first) runs last — by then unregisterClient
+        // has removed the channel from State.clients and writer_thread.join()
+        // has returned, so no other thread holds a pointer to it.
+        defer channel.deinit(self.allocator);
         self.state.registerClient(client_id, &channel) catch return;
         defer self.state.unregisterClient(client_id);
 

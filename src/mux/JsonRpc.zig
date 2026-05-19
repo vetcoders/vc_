@@ -48,13 +48,4 @@ pub const Codec = struct {
             .parsed = parsed,
         };
     }
-
-    pub fn writeMessage(writer: anytype, value: std.json.Value) !void {
-        var string_buf = std.ArrayList(u8).init(std.heap.page_allocator);
-        defer string_buf.deinit();
-        try std.json.stringify(value, .{}, string_buf.writer());
-        const payload = string_buf.items;
-
-        try writer.print("Content-Length: {d}\r\n\r\n{s}", .{ payload.len, payload });
-    }
 };
