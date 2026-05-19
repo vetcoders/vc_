@@ -1,3 +1,6 @@
+// Integration tests for the vc-mux runtime. Spawns a real mux process over a
+// temporary Unix socket and drives it from multiple in-test clients to verify
+// id rewriting, initialize caching, and fan-out routing end-to-end.
 const std = @import("std");
 const testing = std.testing;
 const JsonRpc = @import("JsonRpc.zig");
@@ -117,6 +120,95 @@ test "vc-mux multiplexes clients, rewrites ids, caches initialize, and fans out 
     try client_a.write("{\"jsonrpc\":\"2.0\",\"id\":303,\"method\":\"fanout\",\"params\":{}}");
     try expectFanoutNotification(client_a, allocator);
     try expectFanoutNotification(client_b, allocator);
+}
+
+test "vc-mux serializes concurrent initialize and replays cached response on later clients" {
+    const allocator = testing.allocator;
+    if (!std.Io.net.has_unix_sockets) return error.SkipZigTest;
+
+    const bin_paths = try testBinaries(allocator);
+    defer bin_paths.deinit(allocator);
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const socket_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/tmp/{s}/vc-mux-concurrent-init.sock",
+        .{tmp.sub_path},
+    );
+    defer allocator.free(socket_path);
+
+    // Force the mock server to stall before answering `initialize` so the
+    // second client lands inside the `initialize_in_flight` window and
+    // exercises the `.wait` branch in State.registerInitializeRequest.
+    var env_map = try testing.environ.createMap(allocator);
+    defer env_map.deinit();
+    try env_map.put("VC_MUX_MOCK_INIT_DELAY_MS", "300");
+
+    const mux_argv = &[_][]const u8{
+        bin_paths.mux,
+        "--socket",
+        socket_path,
+        "--max-active-clients",
+        "8",
+        "--cmd",
+        bin_paths.mock_server,
+    };
+    var mux = try std.process.spawn(io, .{
+        .argv = mux_argv,
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+        .environ_map = &env_map,
+    });
+    defer mux.kill(io);
+    defer std.Io.Dir.cwd().deleteFile(io, socket_path) catch {};
+
+    var client_a = try connectClient(allocator, socket_path);
+    defer client_a.destroy();
+    var client_b = try connectClient(allocator, socket_path);
+    defer client_b.destroy();
+
+    // Client A fires initialize first → `.forward` branch (sent to server).
+    try client_a.write("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+
+    // Give A a head start so its initialize is registered as in-flight.
+    // The mock server is still inside its 300 ms sleep when B arrives.
+    try std.Io.sleep(io, .{ .nanoseconds = 50 * std.time.ns_per_ms }, .awake);
+
+    // Client B fires initialize while A's initialize is still in flight →
+    // `.wait` branch. State queues B as a waiter; completeInitialize must
+    // drain it with the cached payload rewritten to B's local id.
+    try client_b.write("{\"jsonrpc\":\"2.0\",\"id\":\"init-b\",\"method\":\"initialize\",\"params\":{}}");
+
+    {
+        var response = try client_a.read(allocator);
+        defer response.deinit();
+        try expectId(response.parsed.value, .{ .integer = 1 });
+        try expectResultObject(response.parsed.value);
+    }
+    {
+        var response = try client_b.read(allocator);
+        defer response.deinit();
+        try expectId(response.parsed.value, .{ .string = "init-b" });
+        try expectResultObject(response.parsed.value);
+    }
+
+    // Now the initialize response is cached. A late-joining client must hit
+    // the `.replay` branch — its initialize is answered locally with the
+    // cached payload rewritten to client C's id, without touching the
+    // upstream server.
+    var client_c = try connectClient(allocator, socket_path);
+    defer client_c.destroy();
+
+    try client_c.write("{\"jsonrpc\":\"2.0\",\"id\":303,\"method\":\"initialize\",\"params\":{}}");
+    {
+        var response = try client_c.read(allocator);
+        defer response.deinit();
+        try expectId(response.parsed.value, .{ .integer = 303 });
+        try expectResultObject(response.parsed.value);
+    }
 }
 
 const TestBinaries = struct {

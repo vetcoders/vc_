@@ -5,6 +5,16 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
 
+    // Optional initialize-response delay (milliseconds). When set, makes the
+    // mock server sleep before answering `initialize`, so the integration
+    // tests can deterministically force vc-mux into the `.wait` path of
+    // State.registerInitializeRequest with two concurrent clients.
+    const init_delay_ns: u64 = blk: {
+        const raw = init.environ_map.get("VC_MUX_MOCK_INIT_DELAY_MS") orelse break :blk 0;
+        const ms = std.fmt.parseInt(u64, raw, 10) catch break :blk 0;
+        break :blk ms * std.time.ns_per_ms;
+    };
+
     const stdin = std.Io.File.stdin();
     const stdout = std.Io.File.stdout();
 
@@ -32,6 +42,9 @@ pub fn main(init: std.process.Init) !void {
         defer allocator.free(id_json);
 
         if (std.mem.eql(u8, method_value.string, "initialize")) {
+            if (init_delay_ns > 0) {
+                std.Io.sleep(io, .{ .nanoseconds = init_delay_ns }, .awake) catch {};
+            }
             const payload = try std.fmt.allocPrint(
                 allocator,
                 "{{\"jsonrpc\":\"2.0\",\"id\":{s},\"result\":{{\"capabilities\":{{}}}}}}",
