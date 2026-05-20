@@ -1,20 +1,45 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!-- Created with Pixodesk SVG (https://pixodesk.com) -->
+<!-- vc_ brand mark.
+     Composition: italic mathematical-script "𝓿𝓬" in off-white +
+     geometric cursor-rect in gold acting as the trailing underscore.
+     The rect is a third character of the wordmark, NOT an ornament.
+     Position is glued to 𝓬 — nudge x on the rect if optical spacing
+     drifts on a particular renderer.
+     Final production export should convert 𝓿𝓬 to <path> elements
+     (Inkscape "Object to Path" or fonttools), this file keeps the
+     glyphs as text so the source stays editable. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" text-rendering="geometricPrecision" shape-rendering="geometricPrecision">
   <rect fill="#0e0e0e" width="1000" height="1000"/>
 
-  <text
-    fill="#f5f1e7"
-    letter-spacing="-30"
-    font-family="&#x27;Instrument Serif&#x27;, Georgia, serif"
-    font-style="italic"
-    font-size="620"
-    font-weight="300"
-    xml:space="preserve"
-    transform="translate(-92.29, -86.8626)scale(0.5415, 0.6097)translate(22.8312, 21.4672)"
-    x="240"
-    y="700"
-    data-gn-el-type="text"
-    style="white-space:pre"
-  ><tspan>𝓿𝓬</tspan><tspan fill="#c99a3b">_</tspan></text>
+  <g transform="translate(-92.29, -86.8626) scale(0.5415, 0.6097) translate(22.8312, 21.4672)">
+    <text
+      fill="#f5f1e7"
+      letter-spacing="-30"
+      font-family="&#x27;Instrument Serif&#x27;, Georgia, serif"
+      font-style="italic"
+      font-size="620"
+      font-weight="300"
+      x="240"
+      y="700"
+      xml:space="preserve"
+      style="white-space:pre"
+    >𝓿𝓬</text>
+
+    <!-- Cursor-underscore. Lives in the same transform group as 𝓿𝓬 so
+         it scales identically with the wordmark. x sits a hair after
+         the optical end of 𝓬 (overlap by ~10 user units so it reads
+         as one glyph, not as an ornament). y is just below the
+         baseline of 𝓬. Height/width are tuned for a chunky terminal
+         cursor, not a thin typographic underscore. rx gives a touch
+         of pixel-rounding so it still feels rendered, not stamped. -->
+    <rect
+      fill="#c99a3b"
+      x="828"
+      y="708"
+      width="206"
+      height="46"
+      rx="6"
+      ry="6"
+    />
+  </g>
 </svg>
