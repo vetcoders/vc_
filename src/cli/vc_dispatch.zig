@@ -73,9 +73,9 @@ pub fn runSkill(
     }
 
     const resolved_root = if (root) |value|
-        try std.fs.realpathAlloc(alloc, value)
+        try std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, value, alloc)
     else
-        try std.fs.cwd().realpathAlloc(alloc, ".");
+        try std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, ".", alloc);
     defer alloc.free(resolved_root);
 
     var result = dispatch_runtime.dispatchSkill(alloc, .{
