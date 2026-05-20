@@ -150,7 +150,7 @@ fn collect(alloc: Allocator) !Report {
             .fail,
             "config",
             summary,
-            "Create the vc-board config path and rerun `vc-board doctor`.",
+            "Create the vc_ config path and rerun `vc_ doctor`.",
         );
         break :config_path null;
     };
@@ -250,7 +250,7 @@ fn collectBundledAssets(
             .warn,
             "helpers",
             "no bundled helpers directory detected",
-            "Package vc-board through distribution scripts before shipping.",
+            "Package vc_ through distribution scripts before shipping.",
         );
     }
 
@@ -276,7 +276,7 @@ fn collectBundledAssets(
             .warn,
             "skills",
             "no bundled skills directory detected",
-            "Package vc-board through distribution scripts before shipping.",
+            "Package vc_ through distribution scripts before shipping.",
         );
     }
 
@@ -330,7 +330,7 @@ fn collectBundleMetadata(
                 .fail,
                 "bundle-id",
                 summary,
-                "Rebuild the macOS app bundle so Info.plist matches the vc-board product identity.",
+                "Rebuild the macOS app bundle so Info.plist matches the vc_ product identity.",
             );
         }
     } else {
@@ -346,7 +346,11 @@ fn collectBundleMetadata(
     defer if (executable_name) |value| alloc.free(value);
 
     if (executable_name) |value| {
-        if (std.mem.eql(u8, value, "vc-board")) {
+        // Accept the canonical "vc_" product mark as well as the
+        // legacy "vc-board" name so old installs still pass doctor.
+        if (std.mem.eql(u8, value, "vc_") or
+            std.mem.eql(u8, value, "vc-board"))
+        {
             const summary = try std.fmt.allocPrint(
                 alloc,
                 "bundle executable matches {s}",
@@ -357,7 +361,7 @@ fn collectBundleMetadata(
         } else {
             const summary = try std.fmt.allocPrint(
                 alloc,
-                "bundle executable mismatch: expected vc-board, found {s}",
+                "bundle executable mismatch: expected vc_, found {s}",
                 .{value},
             );
             defer alloc.free(summary);
@@ -365,7 +369,7 @@ fn collectBundleMetadata(
                 .fail,
                 "bundle-executable",
                 summary,
-                "Rebuild the macOS bundle so Finder launches the vc-board runtime entrypoint.",
+                "Rebuild the macOS bundle so Finder launches the vc_ runtime entrypoint.",
             );
         }
     } else {
@@ -373,7 +377,7 @@ fn collectBundleMetadata(
             .fail,
             "bundle-executable",
             "Info.plist missing CFBundleExecutable",
-            "Rebuild the macOS app bundle so Info.plist points Finder at vc-board.",
+            "Rebuild the macOS app bundle so Info.plist points Finder at vc_.",
         );
     }
 }
@@ -414,7 +418,7 @@ fn collectConfigWriteStatus(
             .fail,
             "config-write",
             "config path has no writable parent directory",
-            "Repair the config path and rerun `vc-board doctor`.",
+            "Repair the config path and rerun `vc_ doctor`.",
         );
         return;
     };
@@ -440,7 +444,7 @@ fn collectConfigWriteStatus(
             .fail,
             "config-write",
             summary,
-            "Fix directory permissions for the vc-board config path.",
+            "Fix directory permissions for the vc_ config path.",
         );
         return;
     };
@@ -632,13 +636,13 @@ fn renderText(report: Report, compact: bool) !void {
             });
         }
         if (!emitted) {
-            try stdout.writeAll("vc-board status: ok\n");
+            try stdout.writeAll("vc_ status: ok\n");
         }
         try stdout.flush();
         return;
     }
 
-    try stdout.writeAll("vc-board doctor\n");
+    try stdout.writeAll("vc_ doctor\n");
     for (report.checks.items) |check| {
         try stdout.print("- [{s}] {s}: {s}\n", .{
             check.severity.label(),
@@ -682,7 +686,7 @@ fn renderMarkdown(report: Report, compact: bool) !void {
     var stdout_writer = std.Io.File.stdout().writerStreaming(std.Options.debug_io, &buffer);
     const stdout = &stdout_writer.interface;
 
-    try stdout.writeAll("# vc-board doctor\n\n");
+    try stdout.writeAll("# vc_ doctor\n\n");
     for (report.checks.items) |check| {
         if (compact and check.severity == .ok) continue;
         try stdout.print("- **{s}** `{s}`: {s}\n", .{
@@ -702,7 +706,7 @@ fn printHelp(mode: Mode) !void {
     var stdout_writer = std.Io.File.stdout().writerStreaming(std.Options.debug_io, &buffer);
     const stdout = &stdout_writer.interface;
     try stdout.print(
-        \\Usage: vc-board {s} [--json|--md]
+        \\Usage: vc_ {s} [--json|--md]
         \\
         \\Checks bundle identity, bundled helpers, bundled skills,
         \\config bootstrap, and agent CLIs in PATH.

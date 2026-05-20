@@ -3,8 +3,8 @@ const Allocator = std.mem.Allocator;
 const file_load = @import("../config/file_load.zig");
 
 pub const default_config_contents =
-    \\# vc-board initial config
-    \\# This file is created lazily on first launch or `vc-board doctor`.
+    \\# vc_ (VC Underscore) initial config
+    \\# This file is created lazily on first launch or `vc_ doctor`.
     \\
 ;
 

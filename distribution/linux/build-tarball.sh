@@ -7,7 +7,10 @@ ARTIFACT_DIR="${ARTIFACT_DIR:-$ROOT_DIR/zig-out/dist}"
 ARCH="$(normalize_arch "${ARCH:-$(uname -m)}")"
 VERSION="${VC_BOARD_VERSION:-dev}"
 STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vc-board-linux.XXXXXX")"
-VC_BOARD_BINARY="${VC_BOARD_BINARY:-$ROOT_DIR/zig-out/bin/vc-board}"
+VC_BOARD_BINARY="${VC_BOARD_BINARY:-$ROOT_DIR/zig-out/bin/vc_}"
+if [[ ! -x "$VC_BOARD_BINARY" && -x "$ROOT_DIR/zig-out/bin/vc-board" ]]; then
+  VC_BOARD_BINARY="$ROOT_DIR/zig-out/bin/vc-board"
+fi
 trap 'rm -rf "$STAGE_DIR"' EXIT
 
 ensure_binary() {
@@ -15,7 +18,7 @@ ensure_binary() {
     return 0
   fi
 
-  echo "Building vc-board binary for linux bundle..." >&2
+  echo "Building vc_ binary for linux bundle..." >&2
   (
     cd "$ROOT_DIR"
     zig build -Druntime=vibecrafted
@@ -30,11 +33,14 @@ ensure_binary
   --binary "$VC_BOARD_BINARY" \
   --version "$VERSION"
 
+# Artifact basename stays vc-board-* so the GitHub release pipeline
+# and install.sh keep their URLs; the tarball expands to a "vc_/"
+# directory inside (with a vc-term -> vc_ symlink for fallback).
 ARTIFACT_BASENAME="vc-board-linux-${ARCH}"
-if tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner -C "$STAGE_DIR" -czf "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.tar.gz" vc-board >/dev/null 2>&1; then
+if tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner -C "$STAGE_DIR" -czf "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.tar.gz" vc_ >/dev/null 2>&1; then
   :
 else
-  tar -C "$STAGE_DIR" -czf "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.tar.gz" vc-board
+  tar -C "$STAGE_DIR" -czf "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.tar.gz" vc_
 fi
 write_sha256_file \
   "$ARTIFACT_DIR/${ARTIFACT_BASENAME}.tar.gz" \

@@ -1,13 +1,26 @@
-# vc-board Release
+# vc_ Release
 
-This repo now ships a dedicated `vc-board` packaging path on top of the existing Ghostty build surface.
+This repo ships a dedicated **vc_** (spoken: "VC Underscore") packaging
+path on top of the existing Ghostty build surface. The hyphenated
+**vc-term** name is provided as a symlink alias inside every bundle so
+launchers / shells / package managers that cannot render the trailing
+underscore can still reach the runtime.
 
 ## Artifacts
 
-- macOS: `vc-board-macos-arm64.dmg`
-- Linux x86_64: `vc-board-linux-x86_64.tar.gz`
-- Linux arm64: `vc-board-linux-arm64.tar.gz`
+The GitHub release tag and artifact basenames stay on the legacy
+`vc-board-*` prefix so existing install URLs keep resolving; the
+contents are rebranded:
+
+- macOS: `vc-board-macos-arm64.dmg` → contains `vc_.app`
+- Linux x86_64: `vc-board-linux-x86_64.tar.gz` → extracts to `vc_/`
+- Linux arm64: `vc-board-linux-arm64.tar.gz` → extracts to `vc_/`
 - Every artifact emits a sibling `.sha256` file.
+
+Inside each bundle:
+
+- `vc_.app/Contents/MacOS/vc_` (canonical) + `vc-term` symlink
+- `vc_/bin/vc_` (canonical) + `vc_/bin/vc-term` symlink
 
 ## Local Build
 
@@ -25,10 +38,12 @@ Package Linux:
 
 The macOS DMG script builds both missing prerequisites when needed:
 
-- the standalone `vc-board` runtime binary
+- the standalone `vc_` runtime binary (`zig build -Druntime=vibecrafted`)
 - the rebranded macOS `.app` shell via `zig build vc-board-app -Druntime=vibecrafted`
 
-The Linux tarball script builds the `vc-board` runtime binary when `zig-out/bin/vc-board` is absent.
+The Linux tarball script builds the `vc_` runtime binary when
+`zig-out/bin/vc_` is absent (falling back to `zig-out/bin/vc-board` for
+checkouts predating the rebrand commit).
 
 The distribution scripts expect the helper binaries to be available through one of these paths:
 
@@ -55,7 +70,7 @@ The workflow:
 1. Bootstraps Zig `0.15.2`
 2. Checks out helper repos
 3. Builds helper binaries
-4. Builds the `vc-board` binary
+4. Builds the `vc_` binary
 5. Produces DMG and Linux tarballs
 6. Uploads checksums and artifacts
 7. Publishes them to the matching GitHub release
@@ -86,3 +101,17 @@ Override the source mirror with:
 ```bash
 VC_BOARD_RELEASE_BASE_URL=https://example.com/releases ./install.sh
 ```
+
+## Package-Name Cheat Sheet
+
+| Surface              | Canonical | Fallback     |
+| -------------------- | --------- | ------------ |
+| Product mark         | `vc_`     | —            |
+| Spoken name          | VC Underscore | —        |
+| Binary               | `vc_`     | `vc-term`    |
+| macOS bundle         | `vc_.app` | —            |
+| Installed command    | `vc_`     | `vc-term`    |
+| Cargo / npm          | `vc_`     | `vc-term`    |
+| PyPI                 | —         | `vc-terminal` / `vc-underscore` |
+| Debian / Homebrew    | —         | `vc-terminal` / `vc-underscore` |
+| Bundle identifier    | `com.vibecrafted.vc-term` | — |

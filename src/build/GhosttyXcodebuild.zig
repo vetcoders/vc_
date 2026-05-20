@@ -199,7 +199,12 @@ pub fn init(
 
 fn bundleName(runtime: ApprtRuntime) []const u8 {
     return switch (runtime) {
-        .vibecrafted => "vc-board.app",
+        // vc_ is the product mark; .app file path uses the same string
+        // so Finder, Spotlight, and dock surfaces all render the
+        // canonical brand. The distribution scripts also accept the
+        // legacy "vc-board.app" name when looking for an existing
+        // bundle to re-stage.
+        .vibecrafted => "vc_.app",
         else => "Ghostty.app",
     };
 }

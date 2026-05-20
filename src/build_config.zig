@@ -56,7 +56,10 @@ pub const i18n: bool = config.i18n;
 /// this variable is NOT ENOUGH to change the bundle ID. I just wanted to
 /// avoid it in Zig code as much as possible.
 pub const bundle_id = switch (config.app_runtime) {
-    .vibecrafted => "com.vibecrafted.vc-board",
+    // vc_ ships under the hyphenated reverse-DNS identifier so macOS /
+    // Linux / freedesktop conventions stay happy. The visible product
+    // mark in Info.plist remains "vc_" (CFBundleName / DisplayName).
+    .vibecrafted => "com.vibecrafted.vc-term",
     else => "com.mitchellh.ghostty",
 };
 

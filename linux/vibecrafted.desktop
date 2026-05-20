@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=vc-board
-Exec=vc-board
-Icon=com.vibecrafted.vc-board
+Name=vc_
+GenericName=VC Underscore
+Exec=vc_
+Icon=com.vibecrafted.vc-term
 Terminal=false
-Categories=Development;Utility;
-Comment=Vibecrafted operator board runtime
+Categories=Development;Utility;System;TerminalEmulator;
+Keywords=vc;vc-;vc-term;vc-terminal;vc-underscore;vibecrafted;terminal;
+Comment=VC Underscore (vc_) — Vibecrafted operator terminal

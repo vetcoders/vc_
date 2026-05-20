@@ -12,7 +12,11 @@ install_step: *std.Build.Step.InstallArtifact,
 
 pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Ghostty {
     const exe_name = switch (cfg.exe_entrypoint) {
-        .vc_board => "vc-board",
+        // vc_ is the canonical product mark (spoken: "VC Underscore").
+        // The vc-term fallback name is provided as a symlink at install
+        // time by distribution/bundle.sh for environments that cannot
+        // render the trailing underscore in their UI.
+        .vc_board => "vc_",
         else => "ghostty",
     };
 

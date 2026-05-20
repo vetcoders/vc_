@@ -93,7 +93,7 @@ fn isHelp(arg: []const u8) bool {
 
 fn printHelp(writer: anytype) !void {
     try writer.writeAll(
-        \\Usage: vc-board skills <list|show <name>>
+        \\Usage: vc_ skills <list|show <name>>
         \\
         \\`list` scans the active vibecrafted skills directory and prints metadata.
         \\`show` prints the parsed metadata plus the markdown body for one skill.

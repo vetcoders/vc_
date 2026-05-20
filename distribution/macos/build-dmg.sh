@@ -7,17 +7,25 @@ ARTIFACT_DIR="${ARTIFACT_DIR:-$ROOT_DIR/zig-out/dist}"
 ARCH="$(normalize_arch "${ARCH:-$(uname -m)}")"
 VERSION="${VC_BOARD_VERSION:-dev}"
 APP_SOURCE="${APP_SOURCE:-}"
-VC_BOARD_BINARY="${VC_BOARD_BINARY:-$ROOT_DIR/zig-out/bin/vc-board}"
-STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vc-board-macos.XXXXXX")"
+# Prefer the vc_-rebranded binary; fall back to the legacy vc-board
+# path for checkouts built before the rebrand commit.
+VC_BOARD_BINARY="${VC_BOARD_BINARY:-$ROOT_DIR/zig-out/bin/vc_}"
+if [[ ! -x "$VC_BOARD_BINARY" && -x "$ROOT_DIR/zig-out/bin/vc-board" ]]; then
+  VC_BOARD_BINARY="$ROOT_DIR/zig-out/bin/vc-board"
+fi
+STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vc-term-macos.XXXXXX")"
 trap 'rm -rf "$STAGE_DIR"' EXIT
 
 find_existing_app() {
   local candidate=""
   for candidate in \
+    "$ROOT_DIR/zig-out/vc_.app" \
     "$ROOT_DIR/zig-out/vc-board.app" \
     "$ROOT_DIR/zig-out/Ghostty.app" \
+    "$ROOT_DIR/macos/build/ReleaseLocal/vc_.app" \
     "$ROOT_DIR/macos/build/ReleaseLocal/vc-board.app" \
     "$ROOT_DIR/macos/build/ReleaseLocal/Ghostty.app" \
+    "$ROOT_DIR/macos/build/Debug/vc_.app" \
     "$ROOT_DIR/macos/build/Debug/vc-board.app" \
     "$ROOT_DIR/macos/build/Debug/Ghostty.app"; do
     if [[ -d "$candidate" ]]; then
@@ -33,7 +41,7 @@ ensure_binary() {
     return 0
   fi
 
-  echo "Building vc-board runtime binary for macOS bundle..." >&2
+  echo "Building vc_ runtime binary for macOS bundle..." >&2
   (
     cd "$ROOT_DIR"
     zig build -Druntime=vibecrafted
@@ -50,7 +58,7 @@ ensure_app_source() {
     return 0
   fi
 
-  echo "Building vc-board macOS app shell..." >&2
+  echo "Building vc_ macOS app shell..." >&2
   (
     cd "$ROOT_DIR"
     zig build vc-board-app -Druntime=vibecrafted
@@ -58,7 +66,7 @@ ensure_app_source() {
 
   APP_SOURCE="$(find_existing_app || true)"
   if [[ -z "$APP_SOURCE" ]]; then
-    echo "vc-board app bundle was not produced by zig build vc-board-app" >&2
+    echo "vc_ app bundle was not produced by zig build vc-board-app" >&2
     exit 1
   fi
 }
@@ -77,9 +85,11 @@ bundle_args+=(--app "$APP_SOURCE")
 
 ln -s /Applications "$STAGE_DIR/Applications"
 
+# Artifact basename stays vc-board-* so existing GitHub release URLs
+# and install.sh keep resolving; the .dmg now contains vc_.app inside.
 ARTIFACT_BASENAME="vc-board-macos-${ARCH}"
 hdiutil create \
-  -volname "vc-board" \
+  -volname "vc_" \
   -srcfolder "$STAGE_DIR" \
   -ov \
   -format UDZO \

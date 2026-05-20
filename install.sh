@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Installer for vc_ (spoken: "VC Underscore"). The remote artifact
+# names still carry the legacy "vc-board" tag because the GitHub
+# release channel uses them, but the binaries inside install as
+# vc_ with a vc-term symlink fallback.
 BASE_URL="${VC_BOARD_RELEASE_BASE_URL:-https://vibecrafted.io/releases}"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
-tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/vc-board-install.XXXXXX")"
+tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/vc-term-install.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
 
 case "$ARCH" in
@@ -42,13 +46,15 @@ if [[ "$OS" == "darwin" ]]; then
   open "$tmpdir/$artifact"
   cat <<EOF
 Mounted $artifact.
-Drag vc-board.app into /Applications, then launch it once.
+Drag vc_.app into /Applications, then launch it once.
+(The installed command is "vc_"; a hyphenated "vc-term" symlink is
+included for environments that cannot render the trailing underscore.)
 EOF
   exit 0
 fi
 
 if [[ "$OS" == "linux" ]]; then
-  install_dir="${VC_BOARD_INSTALL_DIR:-$HOME/.local/opt/vc-board}"
+  install_dir="${VC_BOARD_INSTALL_DIR:-${VC_INSTALL_DIR:-$HOME/.local/opt/vc_}}"
   artifact="vc-board-linux-${ARCH}.tar.gz"
   checksum="${artifact}.sha256"
   mkdir -p "$install_dir"
@@ -60,8 +66,9 @@ if [[ "$OS" == "linux" ]]; then
   )
   tar -xzf "$tmpdir/$artifact" -C "$install_dir" --strip-components=1
   cat <<EOF
-Installed vc-board into $install_dir
-Add $install_dir/bin to PATH to invoke vc-board directly.
+Installed vc_ (VC Underscore) into $install_dir
+Add $install_dir/bin to PATH to invoke "vc_" (or the fallback alias
+"vc-term") from any shell.
 EOF
   exit 0
 fi

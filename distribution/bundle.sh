@@ -6,7 +6,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LAYOUT=""
 OUTPUT_DIR=""
 APP_SOURCE=""
-BINARY_SOURCE="${VC_BOARD_BINARY:-$ROOT_DIR/zig-out/bin/vc-board}"
+BINARY_SOURCE="${VC_BOARD_BINARY:-$ROOT_DIR/zig-out/bin/vc_}"
+# Legacy zig-out path (pre-vc_-rebrand). Keeps the build dir compatible
+# with checkouts that still produce zig-out/bin/vc-board.
+if [[ ! -x "$BINARY_SOURCE" && -x "$ROOT_DIR/zig-out/bin/vc-board" ]]; then
+  BINARY_SOURCE="$ROOT_DIR/zig-out/bin/vc-board"
+fi
 HELPERS_DIR="${VC_BOARD_HELPERS_DIR:-$HOME/.vibecrafted/bin}"
 SKILLS_DIR="${VC_BOARD_SKILLS_DIR:-$ROOT_DIR/.agents/skills}"
 VERSION="${VC_BOARD_VERSION:-dev}"
@@ -18,7 +23,7 @@ Usage: distribution/bundle.sh --layout macos|linux --output <dir> [options]
 
 Options:
   --app <path>         Existing .app bundle to augment (macOS only).
-  --binary <path>      vc-board binary to package.
+  --binary <path>      vc_ runtime binary to package (was: vc-board).
   --helpers-dir <dir>  Directory containing bundled helper binaries.
   --skills-dir <dir>   Directory containing skills to embed.
   --version <value>    Version string for generated metadata.
@@ -50,7 +55,7 @@ if [[ "$LAYOUT" == "macos" && -n "$APP_SOURCE" ]]; then
 fi
 
 if [[ "$needs_binary" -eq 1 && ! -x "$BINARY_SOURCE" ]]; then
-  echo "vc-board binary not found: $BINARY_SOURCE" >&2
+  echo "vc_ runtime binary not found: $BINARY_SOURCE" >&2
   exit 1
 fi
 
@@ -234,23 +239,34 @@ write_default_config() {
   local config_path="$1"
   mkdir -p "$(dirname "$config_path")"
   cat >"$config_path" <<'EOF'
-# vc-board bundled config
+# vc_ (VC Underscore) bundled config
 # Runtime-specific defaults land here as install behavior matures.
 EOF
 }
 
 bundle_linux() {
-  local bundle_root="$OUTPUT_DIR/vc-board"
+  # Bundle root is named vc_ to match the product mark; the vc-term
+  # fallback name is added below as a symlink for environments that
+  # cannot render an underscore in their UI.
+  local bundle_root="$OUTPUT_DIR/vc_"
   rm -rf "$bundle_root"
   mkdir -p "$bundle_root/bin" "$bundle_root/share" "$bundle_root/share/applications"
 
-  cp "$BINARY_SOURCE" "$bundle_root/bin/vc-board"
-  chmod +x "$bundle_root/bin/vc-board"
+  cp "$BINARY_SOURCE" "$bundle_root/bin/vc_"
+  chmod +x "$bundle_root/bin/vc_"
+  # Fallback hyphenated alias for shells / packagers that dislike the
+  # trailing underscore (Debian, Homebrew, PyPI naming policies).
+  ln -sf vc_ "$bundle_root/bin/vc-term"
   copy_helpers "$bundle_root/bin"
   copy_skills "$bundle_root/share/skills"
   write_default_config "$bundle_root/share/config/config"
   if [[ -f "$ROOT_DIR/linux/vibecrafted.desktop" ]]; then
-    cp "$ROOT_DIR/linux/vibecrafted.desktop" "$bundle_root/share/applications/vibecrafted.desktop"
+    cp "$ROOT_DIR/linux/vibecrafted.desktop" "$bundle_root/share/applications/vc_.desktop"
+  fi
+  if [[ -f "$ROOT_DIR/vc_.svg" ]]; then
+    mkdir -p "$bundle_root/share/icons/hicolor/scalable/apps"
+    cp "$ROOT_DIR/vc_.svg" \
+      "$bundle_root/share/icons/hicolor/scalable/apps/com.vibecrafted.vc-term.svg"
   fi
 }
 
@@ -264,13 +280,15 @@ write_macos_plist() {
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>vc-board</string>
+  <string>vc_</string>
   <key>CFBundleIdentifier</key>
-  <string>com.vibecrafted.vc-board</string>
+  <string>com.vibecrafted.vc-term</string>
   <key>CFBundleName</key>
-  <string>vc-board</string>
+  <string>vc_</string>
   <key>CFBundleDisplayName</key>
-  <string>vc-board</string>
+  <string>vc_</string>
+  <key>CFBundleSpokenName</key>
+  <string>VC Underscore</string>
   <key>CFBundleShortVersionString</key>
   <string>${VERSION}</string>
   <key>CFBundleVersion</key>
@@ -288,14 +306,16 @@ rewrite_macos_plist() {
   local plist_path="$1"
 
   if [[ -f "$plist_path" ]] && command -v /usr/libexec/PlistBuddy >/dev/null 2>&1; then
-    /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable vc-board" "$plist_path" 2>/dev/null || \
-      /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string vc-board" "$plist_path"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.vibecrafted.vc-board" "$plist_path" 2>/dev/null || \
-      /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.vibecrafted.vc-board" "$plist_path"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleName vc-board" "$plist_path" 2>/dev/null || \
-      /usr/libexec/PlistBuddy -c "Add :CFBundleName string vc-board" "$plist_path"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName vc-board" "$plist_path" 2>/dev/null || \
-      /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string vc-board" "$plist_path"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable vc_" "$plist_path" 2>/dev/null || \
+      /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string vc_" "$plist_path"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.vibecrafted.vc-term" "$plist_path" 2>/dev/null || \
+      /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.vibecrafted.vc-term" "$plist_path"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleName vc_" "$plist_path" 2>/dev/null || \
+      /usr/libexec/PlistBuddy -c "Add :CFBundleName string vc_" "$plist_path"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName vc_" "$plist_path" 2>/dev/null || \
+      /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string vc_" "$plist_path"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleSpokenName 'VC Underscore'" "$plist_path" 2>/dev/null || \
+      /usr/libexec/PlistBuddy -c "Add :CFBundleSpokenName string 'VC Underscore'" "$plist_path"
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "$plist_path" 2>/dev/null || \
       /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string ${VERSION}" "$plist_path"
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION}" "$plist_path" 2>/dev/null || \
@@ -309,7 +329,11 @@ rewrite_macos_plist() {
 }
 
 bundle_macos() {
-  local app_bundle="$OUTPUT_DIR/vc-board.app"
+  # The user-visible app bundle is "vc_.app" (display: vc_, spoken:
+  # "VC Underscore"). The vc-term fallback is dropped in as a symlink
+  # inside the bundle so launchers without underscore rendering can
+  # still locate the executable.
+  local app_bundle="$OUTPUT_DIR/vc_.app"
   rm -rf "$app_bundle"
 
   if [[ -n "$APP_SOURCE" ]]; then
@@ -319,12 +343,18 @@ bundle_macos() {
   fi
 
   mkdir -p "$app_bundle/Contents/MacOS" "$app_bundle/Contents/Resources"
-  cp "$BINARY_SOURCE" "$app_bundle/Contents/MacOS/vc-board"
-  chmod +x "$app_bundle/Contents/MacOS/vc-board"
+  cp "$BINARY_SOURCE" "$app_bundle/Contents/MacOS/vc_"
+  chmod +x "$app_bundle/Contents/MacOS/vc_"
+  ln -sf vc_ "$app_bundle/Contents/MacOS/vc-term"
   rm -f \
     "$app_bundle/Contents/MacOS/ghostty" \
-    "$app_bundle/Contents/MacOS/Ghostty"
+    "$app_bundle/Contents/MacOS/Ghostty" \
+    "$app_bundle/Contents/MacOS/vc-board"
   rewrite_macos_plist "$app_bundle/Contents/Info.plist"
+
+  if [[ -f "$ROOT_DIR/vc_.svg" ]]; then
+    cp "$ROOT_DIR/vc_.svg" "$app_bundle/Contents/Resources/vc_.svg"
+  fi
 
   mkdir -p "$app_bundle/Contents/Resources/bin"
   copy_helpers "$app_bundle/Contents/Resources/bin"

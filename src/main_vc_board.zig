@@ -94,21 +94,30 @@ fn printHelp(io: std.Io) !void {
     var stdout_writer = std.Io.File.stdout().writerStreaming(io, &buffer);
     const stdout = &stdout_writer.interface;
     try stdout.writeAll(
-        \\Usage: vc-board [doctor|status|skills|<skill>] [--json|--md]
+        \\Usage: vc_ [doctor|status|skills|<skill>] [--json|--md]
         \\
-        \\Without a subcommand, vc-board launches the runtime.
+        \\Without a subcommand, vc_ (VC Underscore) launches the runtime.
         \\`doctor` validates the install surface.
         \\`status` prints only warnings and failures.
         \\`skills` scans the runtime skills surface (`list`, `show <name>`).
-        \\Any other subcommand is treated as a runtime skill (`vc-board init claude`, `vc-board workflow codex`).
-        \\If the binary is invoked through an alias such as `vc-init`, that alias is dispatched as the skill name.
+        \\Any other subcommand is treated as a runtime skill
+        \\(`vc_ init claude`, `vc_ workflow codex`).
+        \\If the binary is invoked through an alias such as `vc-init`,
+        \\that alias is dispatched as the skill name. The hyphenated
+        \\`vc-term` alias and the legacy `vc-board` name are treated
+        \\as direct runtime launchers, not skills.
         \\
     );
     try stdout.flush();
 }
 
 fn aliasSkillName(invoked_as: []const u8) ?[]const u8 {
+    // Direct runtime invocation: bare "vc_" plus the hyphenated
+    // fallbacks "vc-term" (new) and "vc-board" (legacy) all mean
+    // "launch the runtime", not "dispatch a skill".
+    if (std.mem.eql(u8, invoked_as, "vc_")) return null;
     if (!std.mem.startsWith(u8, invoked_as, "vc-")) return null;
+    if (std.mem.eql(u8, invoked_as, "vc-term")) return null;
     if (std.mem.eql(u8, invoked_as, "vc-board")) return null;
 
     const suffix = invoked_as["vc-".len..];
@@ -116,8 +125,10 @@ fn aliasSkillName(invoked_as: []const u8) ?[]const u8 {
     return suffix;
 }
 
-test "aliasSkillName ignores vc-board and resolves vc-init" {
+test "aliasSkillName ignores runtime launchers and resolves vc-init" {
     try std.testing.expectEqualStrings("init", aliasSkillName("vc-init").?);
+    try std.testing.expect(aliasSkillName("vc_") == null);
+    try std.testing.expect(aliasSkillName("vc-term") == null);
     try std.testing.expect(aliasSkillName("vc-board") == null);
     try std.testing.expect(aliasSkillName("ghostty") == null);
 }

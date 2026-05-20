@@ -27,9 +27,17 @@ clean:
 		macos/GhosttyKit.xcframework
 .PHONY: clean
 
+# Build the vc_ (VC Underscore) runtime. The binary lands in
+# zig-out/bin/vc_; a vc-term symlink is created at bundle time for
+# environments that cannot render the trailing underscore.
 vibecrafted:
 	zig build -Druntime=vibecrafted
 .PHONY: vibecrafted
+
+# Convenience alias matching the new product mark.
+vc:
+	zig build -Druntime=vibecrafted
+.PHONY: vc
 
 bundle-linux:
 	./distribution/bundle.sh --layout linux --output ./zig-out/bundle
@@ -52,5 +60,5 @@ wizard:
 .PHONY: wizard
 
 gui-install:
-	@echo "Legacy GUI installer is retired. Use \`make dmg\` or open the packaged vc-board.app bundle."
+	@echo "Legacy GUI installer is retired. Use \`make dmg\` or open the packaged vc_.app bundle."
 .PHONY: gui-install
