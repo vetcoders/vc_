@@ -2,7 +2,19 @@
 <!-- Created with Pixodesk SVG (https://pixodesk.com) -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" text-rendering="geometricPrecision" shape-rendering="geometricPrecision">
   <rect fill="#0e0e0e" width="1000" height="1000"/>
-  <text fill="#c99a3b" letter-spacing="-30" font-family="&#x27;Instrument Serif&#x27;, Georgia, serif" font-style="italic" font-size="620" font-weight="600" xml:space="preserve" transform="translate(-45.1968, -38.3981)scale(0.2355, 0.4442)" x="240" y="700" data-gn-el-type="text" style="white-space:pre"><tspan>﹥ </tspan></text>
-  <rect fill="#c99a3b" transform="translate(139.027, -431.1824)scale(0.7529, 0.9414)" rx="2" ry="0" x="445" y="720" width="200" height="28"/>
-  <text fill="#f5f1e7" letter-spacing="-30" font-family="&#x27;Instrument Serif&#x27;, Georgia, serif" font-style="italic" font-size="620" font-weight="300" xml:space="preserve" transform="translate(59.115, -74.7228)scale(0.3937, 0.4858)" x="240" y="700" data-gn-el-type="text" style="white-space:pre"><tspan>𝓿𝓬 </tspan></text>
+
+  <text
+    fill="#f5f1e7"
+    letter-spacing="-30"
+    font-family="&#x27;Instrument Serif&#x27;, Georgia, serif"
+    font-style="italic"
+    font-size="620"
+    font-weight="300"
+    xml:space="preserve"
+    transform="translate(-92.29, -86.8626)scale(0.5415, 0.6097)translate(22.8312, 21.4672)"
+    x="240"
+    y="700"
+    data-gn-el-type="text"
+    style="white-space:pre"
+  ><tspan>𝓿𝓬</tspan><tspan fill="#c99a3b">_</tspan></text>
 </svg>
