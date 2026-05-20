@@ -21,12 +21,7 @@ pub const Request = dsr_enum: {
         };
     }
 
-    break :dsr_enum @Type(.{ .@"enum" = .{
-        .tag_type = Tag.Backing,
-        .fields = &fields,
-        .decls = &.{},
-        .is_exhaustive = true,
-    } });
+    break :dsr_enum lib.Reify.Enum(Tag.Backing, .exhaustive, &fields);
 };
 
 /// The tag type for our enum is a u16 but we use a packed struct

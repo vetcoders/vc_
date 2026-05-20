@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const reify = @import("../../lib/reify.zig");
 
 pub const ParseError = error{
     MissingEntry,
@@ -81,12 +82,7 @@ pub fn FormatStruct(comptime vars: []const Variable) type {
         };
     }
 
-    return @Type(.{ .@"struct" = .{
-        .layout = .auto,
-        .fields = &fields,
-        .decls = &.{},
-        .is_tuple = false,
-    } });
+    return reify.Struct(.auto, null, &fields);
 }
 
 /// Possible variables in a tmux format string that we support.

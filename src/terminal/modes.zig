@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const testing = std.testing;
+const lib = @import("lib.zig");
 
 /// A struct that maintains the state of all the settable modes.
 pub const ModeState = struct {
@@ -112,12 +113,7 @@ pub const ModePacked = packed_struct: {
         };
     }
 
-    break :packed_struct @Type(.{ .@"struct" = .{
-        .layout = .@"packed",
-        .fields = &fields,
-        .decls = &.{},
-        .is_tuple = false,
-    } });
+    break :packed_struct lib.Reify.Struct(.@"packed", null, &fields);
 };
 
 /// An enum(u16) of the available modes. See entries for available values.
@@ -134,12 +130,7 @@ pub const Mode = mode_enum: {
         };
     }
 
-    break :mode_enum @Type(.{ .@"enum" = .{
-        .tag_type = ModeTag.Backing,
-        .fields = &fields,
-        .decls = &.{},
-        .is_exhaustive = true,
-    } });
+    break :mode_enum lib.Reify.Enum(ModeTag.Backing, .exhaustive, &fields);
 };
 
 /// The tag type for our enum is a u16 but we use a packed struct
@@ -270,6 +261,11 @@ const entries: []const ModeEntry = &.{
     .{ .name = "reverse_wrap", .value = 45 },
     .{ .name = "alt_screen_legacy", .value = 47 },
     .{ .name = "keypad_keys", .value = 66 },
+    // DEC Backarrow Key Mode (DECBKM)
+    // See https://vt100.net/dec/ek-vt3xx-tp-002.pdf page 170
+    // If `false` (the default), `backspace` emits 0x7f
+    // If `true`, `backspace` emits 0x08
+    .{ .name = "backarrow_key_mode", .value = 67 },
     .{ .name = "enable_left_and_right_margin", .value = 69 },
     .{ .name = "mouse_event_normal", .value = 1000 },
     .{ .name = "mouse_event_button", .value = 1002 },

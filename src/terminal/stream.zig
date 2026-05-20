@@ -1017,7 +1017,7 @@ pub fn Stream(comptime H: type) type {
 
                     const mode_: ?csi.EraseDisplay = switch (input.params.len) {
                         0 => .below,
-                        1 => std.meta.intToEnum(csi.EraseDisplay, input.params[0]) catch null,
+                        1 => enumFromInt(csi.EraseDisplay, input.params[0]),
                         else => null,
                     };
 
@@ -1342,7 +1342,7 @@ pub fn Stream(comptime H: type) type {
                 'g' => switch (input.intermediates.len) {
                     0 => {
                         const mode: csi.TabClear = switch (input.params.len) {
-                            1 => std.meta.intToEnum(csi.TabClear, input.params[0]) catch {
+                            1 => enumFromInt(csi.TabClear, input.params[0]) orelse {
                                 log.warn("invalid tab clear mode: {}", .{input.params[0]});
                                 return;
                             },
@@ -3446,4 +3446,11 @@ test "stream: tab clear with overflowing param" {
     // This is the exact input from the fuzz crash (minus the mode byte):
     // CSI with a huge numeric param that saturates to 65535, followed by 'g'.
     s.nextSlice("\x1b[388888888888888888888888888888888888g\x1b[0m");
+}
+
+fn enumFromInt(comptime E: type, value: anytype) ?E {
+    inline for (@typeInfo(E).@"enum".fields) |field| {
+        if (field.value == value) return @field(E, field.name);
+    }
+    return null;
 }
