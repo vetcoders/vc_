@@ -1,6 +1,7 @@
 const Metrics = @This();
 
 const std = @import("std");
+const reify = @import("../lib/reify.zig");
 const assert = @import("../quirks.zig").inlineAssert;
 
 /// Recommended cell width and height for a monospace grid using this font.
@@ -593,15 +594,11 @@ pub const Key = key: {
         count += 1;
     }
 
-    var decls = [_]std.builtin.Type.Declaration{};
-    break :key @Type(.{
-        .@"enum" = .{
-            .tag_type = std.math.IntFittingRange(0, count - 1),
-            .fields = enumFields[0..count],
-            .decls = &decls,
-            .is_exhaustive = true,
-        },
-    });
+    break :key reify.Enum(
+        std.math.IntFittingRange(0, count - 1),
+        .exhaustive,
+        enumFields[0..count],
+    );
 };
 
 // NOTE: This is purposely not pub because we want to force outside callers

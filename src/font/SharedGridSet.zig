@@ -28,6 +28,7 @@ const SharedGrid = font.SharedGrid;
 const discovery = @import("discovery.zig");
 const configpkg = @import("../config.zig");
 const Config = configpkg.Config;
+const thread = @import("../lib/main.zig").thread;
 
 const log = std.log.scoped(.font_shared_grid_set);
 
@@ -44,7 +45,7 @@ font_lib: Library,
 font_discover: ?Discover = null,
 
 /// Lock to protect multi-threaded access to the map.
-lock: std.Thread.Mutex = .{},
+lock: thread.Mutex = .{},
 
 pub const InitError = Library.InitError;
 
@@ -442,7 +443,7 @@ fn discover(self: *SharedGridSet) !?*Discover {
     // If we initialized, use it
     if (self.font_discover) |*v| return v;
 
-    self.font_discover = .init();
+    self.font_discover = .init(self.font_lib);
     return &self.font_discover.?;
 }
 

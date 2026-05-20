@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const macos = @import("macos");
 const objc = @import("objc");
 const math = @import("../../math.zig");
+const reify = @import("../../lib/reify.zig");
 
 const mtl = @import("api.zig");
 const Pipeline = @import("Pipeline.zig");
@@ -86,12 +87,7 @@ const PipelineCollection = t: {
             .alignment = @alignOf(Pipeline),
         };
     }
-    break :t @Type(.{ .@"struct" = .{
-        .layout = .auto,
-        .fields = &fields,
-        .decls = &.{},
-        .is_tuple = false,
-    } });
+    break :t reify.Struct(.auto, null, &fields);
 };
 
 /// This contains the state for the shaders used by the Metal renderer.

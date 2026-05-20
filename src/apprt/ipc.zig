@@ -139,12 +139,7 @@ pub const Action = union(enum) {
             };
         }
 
-        break :cvalue @Type(.{ .@"union" = .{
-            .layout = .@"extern",
-            .tag_type = null,
-            .fields = &union_fields,
-            .decls = &.{},
-        } });
+        break :cvalue lib.Reify.Union(.@"extern", null, &union_fields);
     };
 
     /// Sync with: ghostty_ipc_action_s

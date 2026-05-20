@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
+const reify = @import("../lib/reify.zig");
 
 /// Conditionals in Ghostty configuration are based on a static, typed
 /// state of the world instead of a dynamic key-value set. This simplifies
@@ -45,12 +46,11 @@ pub const Key = key: {
         .value = i,
     };
 
-    break :key @Type(.{ .@"enum" = .{
-        .tag_type = std.math.IntFittingRange(0, fields.len - 1),
-        .fields = &fields,
-        .decls = &.{},
-        .is_exhaustive = true,
-    } });
+    break :key reify.Enum(
+        std.math.IntFittingRange(0, fields.len - 1),
+        .exhaustive,
+        &fields,
+    );
 };
 
 /// A single conditional that can be true or false.

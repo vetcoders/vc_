@@ -3,6 +3,7 @@ const mem = std.mem;
 const assert = @import("../quirks.zig").inlineAssert;
 const Allocator = mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
+const reify = @import("../lib/reify.zig");
 const diags = @import("diagnostics.zig");
 const internal_os = @import("../os/main.zig");
 const Diagnostic = diags.Diagnostic;
@@ -489,18 +490,13 @@ pub fn parseTaggedUnion(comptime T: type, alloc: Allocator, v: []const u8) !T {
 
             // We need to create a struct that looks like this union field.
             // This lets us use parseIntoField as if its a dedicated struct.
-            const Target = @Type(.{ .@"struct" = .{
-                .layout = .auto,
-                .fields = &.{.{
+            const Target = reify.Struct(.auto, null, &.{.{
                     .name = field.name,
                     .type = field.type,
                     .default_value_ptr = null,
                     .is_comptime = false,
                     .alignment = @alignOf(field.type),
-                }},
-                .decls = &.{},
-                .is_tuple = false,
-            } });
+                }});
 
             // Parse the value into the struct
             var t: Target = undefined;

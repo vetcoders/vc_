@@ -34,6 +34,7 @@ const Metrics = font.Metrics;
 const Presentation = font.Presentation;
 const Style = font.Style;
 const RenderOptions = font.face.RenderOptions;
+const thread = @import("../lib/main.zig").thread;
 
 const log = std.log.scoped(.font_shared_grid);
 
@@ -60,7 +61,7 @@ metrics: Metrics,
 /// this directly if they need to i.e. access the atlas directly. Because
 /// callers can use this lock directly, maintainers need to be extra careful
 /// to review call sites to ensure they are using the lock correctly.
-lock: std.Thread.RwLock,
+lock: thread.RwLock,
 
 pub const init_tw = tripwire.module(enum {
     codepoints_capacity,

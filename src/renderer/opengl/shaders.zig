@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = @import("../../quirks.zig").inlineAssert;
 const math = @import("../../math.zig");
+const reify = @import("../../lib/reify.zig");
 
 const Pipeline = @import("Pipeline.zig");
 
@@ -73,12 +74,7 @@ const PipelineCollection = t: {
             .alignment = @alignOf(Pipeline),
         };
     }
-    break :t @Type(.{ .@"struct" = .{
-        .layout = .auto,
-        .fields = &fields,
-        .decls = &.{},
-        .is_tuple = false,
-    } });
+    break :t reify.Struct(.auto, null, &fields);
 };
 
 /// This contains the state for the shaders used by the Metal renderer.
