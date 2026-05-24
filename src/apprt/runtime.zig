@@ -20,9 +20,9 @@ pub const Runtime = enum {
             // The Linux and FreeBSD default is GTK because it is a full
             // featured application.
             .linux, .freebsd => .gtk,
-            // Otherwise, we do NONE so we don't create an exe and we create
-            // libghostty. On macOS, Xcode is used to build the app that links
-            // to libghostty.
+            // vc_ is the macOS-native Vibecrafted lab; the default build must
+            // produce the operator-facing vc_ binary, not the upstream library.
+            .macos => .vibecrafted,
             else => .none,
         };
     }

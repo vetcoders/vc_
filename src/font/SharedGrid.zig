@@ -81,7 +81,7 @@ pub const init_tw = tripwire.module(enum {
 pub fn init(
     alloc: Allocator,
     resolver: CodepointResolver,
-) !SharedGrid {
+) anyerror!SharedGrid {
     const tw = init_tw;
 
     // We need to support loading options since we use the size data
