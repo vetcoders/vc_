@@ -500,7 +500,7 @@ pub const Workspace = struct {
     };
 
     allocator: Allocator,
-    tabs: std.ArrayListUnmanaged(*Tab) = .{},
+    tabs: std.ArrayListUnmanaged(*Tab) = .empty,
     active_tab_id: ?TabId = null,
     next_tab_id: TabId = 1,
 

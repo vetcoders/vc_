@@ -67,7 +67,7 @@ pub fn resourcesDir(alloc: Allocator) !ResourcesDir {
 
     // Get the path to our running binary
     var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-    var exe: []const u8 = std.fs.selfExePath(&exe_buf) catch return .{};
+    var exe: []const u8 = exe_buf[0 .. std.process.executablePath(std.Options.debug_io, &exe_buf) catch return .{}];
 
     // We have an exe path! Climb the tree looking for the terminfo
     // bundle as we expect it.
@@ -127,7 +127,7 @@ pub fn maybeDir(
 ) !?[]const u8 {
     const path = try std.fmt.bufPrint(buf, "{s}/{s}/{s}", .{ base, sub, suffix });
 
-    if (std.fs.accessAbsolute(path, .{})) {
+    if (std.Io.Dir.accessAbsolute(std.Options.debug_io, path, .{})) {
         const len = path.len - suffix.len - 1;
         return buf[0..len];
     } else |_| {

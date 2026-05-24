@@ -2,8 +2,12 @@ const builtin = @import("builtin");
 const std = @import("std");
 
 const Allocator = std.mem.Allocator;
+const events_emitter = @import("events_emitter.zig");
 const skills_runtime = @import("skills.zig");
 const session = @import("session.zig");
+
+pub const testing_events_emitter = events_emitter;
+pub const testing_session = session;
 
 pub const RuntimeMode = enum {
     headless,
@@ -41,6 +45,7 @@ pub const Request = struct {
     project_slug_override: ?[]const u8 = null,
     agent_binary_override: ?[]const u8 = null,
     now_seconds: ?i64 = null,
+    io: ?std.Io = null,
 };
 
 pub const Result = struct {
@@ -65,7 +70,6 @@ pub const Result = struct {
 
 pub const Error = error{
     PromptConflict,
-    TerminalRuntimeNotImplemented,
     UnsupportedAgent,
 };
 
@@ -78,10 +82,10 @@ const FailureStage = enum {
 };
 
 pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
-    if (req.runtime != .headless) return error.TerminalRuntimeNotImplemented;
     if (req.skill_name.len == 0) return error.FileNotFound;
     if (req.prompt_text != null and req.prompt_file != null) return error.PromptConflict;
 
+    const io = req.io orelse runtimeIo();
     const now_seconds = req.now_seconds orelse std.Io.Timestamp.now(std.Options.debug_io, .real).toSeconds();
 
     var layout = try session.resolveLayout(alloc, .{
@@ -121,27 +125,29 @@ pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
     const prompt = try composeSkillPrompt(alloc, req, resolved.prompt_command);
     defer alloc.free(prompt);
     try writeText(meta.prompt_path, prompt);
+    try emitSpawnUpdate(alloc, &layout, &meta, "launching", null);
 
-    var argv_buf: [4][]const u8 = undefined;
+    var argv_buf: [5][]const u8 = undefined;
     const argv = buildAgentArgv(&argv_buf, req.agent, req.agent_binary_override, prompt);
 
     failure_stage = .spawn;
-    var child = try std.process.spawn(std.Options.debug_io, .{
+    var child = try std.process.spawn(io, .{
         .argv = argv,
         .cwd = .{ .path = layout.root },
         .stdin = .ignore,
         .stdout = .pipe,
         .stderr = .pipe,
     });
-    defer child.kill(std.Options.debug_io);
+    defer child.kill(io);
     const launcher_pid = childPid(&child);
     if (launcher_pid) |pid| try meta.markRunning(pid, now_seconds);
+    try emitSpawnUpdate(alloc, &layout, &meta, "running", null);
 
     failure_stage = .collect;
-    const output = try collectOutput(alloc, &child, 2 * 1024 * 1024);
+    const output = try collectOutput(alloc, io, &child, 2 * 1024 * 1024);
     defer output.deinit(alloc);
     failure_stage = .wait;
-    const term = try child.wait(std.Options.debug_io);
+    const term = try child.wait(io);
     const exit_code = exitCode(term);
 
     const transcript = try joinTranscript(alloc, output.stdout, output.stderr);
@@ -149,8 +155,13 @@ pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
     try writeText(meta.transcript_path, transcript);
     try writeText(meta.report_path, if (output.stdout.len > 0) output.stdout else transcript);
 
+    const maybe_session_id = try extractSessionId(alloc, transcript);
+    defer if (maybe_session_id) |value| alloc.free(value);
+    if (maybe_session_id) |session_id| try meta.setSessionId(session_id, unixTimestampSeconds());
+
     failure_stage = .finish;
     try meta.finish(exit_code, unixTimestampSeconds());
+    try emitSpawnUpdate(alloc, &layout, &meta, @tagName(meta.status), maybe_session_id);
     guard_armed = false;
 
     return .{
@@ -167,6 +178,10 @@ pub fn dispatchSkill(alloc: Allocator, req: Request) !Result {
 
 fn unixTimestampSeconds() i64 {
     return std.Io.Timestamp.now(std.Options.debug_io, .real).toSeconds();
+}
+
+fn runtimeIo() std.Io {
+    return if (builtin.is_test) std.testing.io else std.Options.debug_io;
 }
 
 pub fn dispatchInit(alloc: Allocator, req: Request) !Result {
@@ -263,6 +278,45 @@ fn failureReason(stage: FailureStage) []const u8 {
     };
 }
 
+fn emitSpawnUpdate(
+    alloc: Allocator,
+    layout: *const session.Layout,
+    meta: *const session.RunMeta,
+    state: []const u8,
+    session_id_override: ?[]const u8,
+) !void {
+    try events_emitter.emitSpawnUpdate(alloc, layout.vibecrafted_home, .{
+        .run_id = meta.run_id,
+        .agent = meta.agent,
+        .skill = meta.skill_name,
+        .mode = meta.mode,
+        .state = state,
+        .root = meta.root,
+        .session_id = session_id_override orelse meta.session_id,
+        .exit_code = meta.exit_code,
+        .launcher_pid = meta.launcher_pid,
+        .transcript = meta.transcript_path,
+        .report = meta.report_path,
+        .meta = meta.meta_path,
+    });
+}
+
+fn extractSessionId(alloc: Allocator, transcript: []const u8) !?[]const u8 {
+    const marker = "session:";
+    const index = std.mem.indexOf(u8, transcript, marker) orelse return null;
+    var value = transcript[index + marker.len ..];
+    value = std.mem.trimStart(u8, value, " \t\r\n");
+
+    var end: usize = 0;
+    while (end < value.len) : (end += 1) {
+        const ch = value[end];
+        if (std.ascii.isWhitespace(ch)) break;
+    }
+
+    if (end == 0) return null;
+    return try alloc.dupe(u8, value[0..end]);
+}
+
 fn inputContext(
     alloc: Allocator,
     prompt_text: ?[]const u8,
@@ -279,37 +333,43 @@ fn inputContext(
 }
 
 fn buildInitArgv(
-    argv_buf: *[4][]const u8,
+    argv_buf: *[5][]const u8,
     agent: Agent,
     binary_override: ?[]const u8,
     prompt: []const u8,
 ) []const []const u8 {
-    const binary = binary_override orelse agent.label();
-    argv_buf[0] = binary;
+    const offset: usize = if (binary_override) |binary| blk: {
+        argv_buf[0] = binary;
+        break :blk 0;
+    } else blk: {
+        argv_buf[0] = "/usr/bin/env";
+        argv_buf[1] = agent.label();
+        break :blk 1;
+    };
 
     switch (agent) {
         .claude => {
-            argv_buf[1] = "--verbose";
-            argv_buf[2] = "--dangerously-skip-permissions";
-            argv_buf[3] = prompt;
-            return argv_buf[0..4];
+            argv_buf[offset + 1] = "--verbose";
+            argv_buf[offset + 2] = "--dangerously-skip-permissions";
+            argv_buf[offset + 3] = prompt;
+            return argv_buf[0 .. offset + 4];
         },
         .codex => {
-            argv_buf[1] = "--dangerously-bypass-approvals-and-sandbox";
-            argv_buf[2] = prompt;
-            return argv_buf[0..3];
+            argv_buf[offset + 1] = "--dangerously-bypass-approvals-and-sandbox";
+            argv_buf[offset + 2] = prompt;
+            return argv_buf[0 .. offset + 3];
         },
         .gemini => {
-            argv_buf[1] = "-y";
-            argv_buf[2] = "-i";
-            argv_buf[3] = prompt;
-            return argv_buf[0..4];
+            argv_buf[offset + 1] = "-y";
+            argv_buf[offset + 2] = "-i";
+            argv_buf[offset + 3] = prompt;
+            return argv_buf[0 .. offset + 4];
         },
     }
 }
 
 fn buildAgentArgv(
-    argv_buf: *[4][]const u8,
+    argv_buf: *[5][]const u8,
     agent: Agent,
     binary_override: ?[]const u8,
     prompt: []const u8,
@@ -339,12 +399,12 @@ const CollectedOutput = struct {
     }
 };
 
-fn collectOutput(alloc: Allocator, child: *std.process.Child, max_bytes: usize) !CollectedOutput {
+fn collectOutput(alloc: Allocator, io: std.Io, child: *std.process.Child, max_bytes: usize) !CollectedOutput {
     var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
     var multi_reader: std.Io.File.MultiReader = undefined;
     multi_reader.init(
         alloc,
-        std.Options.debug_io,
+        io,
         multi_reader_buffer.toStreams(),
         &.{ child.stdout.?, child.stderr.? },
     );
@@ -398,14 +458,20 @@ fn writeText(path: []const u8, data: []const u8) !void {
     try atomic_file.replace(std.Options.debug_io);
 }
 
+fn testingRealPath(alloc: Allocator, dir: std.Io.Dir, sub_path: []const u8) ![]u8 {
+    const zpath = try dir.realPathFileAlloc(std.Options.debug_io, sub_path, alloc);
+    defer alloc.free(zpath);
+    return alloc.dupe(u8, zpath);
+}
+
 test "dispatchSkill writes prompt/report/meta and reuses sweep" {
     const testing = std.testing;
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills/vc-workflow");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(std.Options.debug_io, "skills/vc-workflow");
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "skills/vc-workflow/SKILL.md",
         .data =
         \\---
@@ -416,8 +482,8 @@ test "dispatchSkill writes prompt/report/meta and reuses sweep" {
         ,
     });
 
-    try tmp.dir.makePath("bin");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(std.Options.debug_io, "bin");
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "bin/fake-claude.sh",
         .data =
         \\#!/bin/sh
@@ -426,18 +492,18 @@ test "dispatchSkill writes prompt/report/meta and reuses sweep" {
         ,
     });
     if (comptime builtin.os.tag != .windows) {
-        const file = try tmp.dir.openFile("bin/fake-claude.sh", .{});
-        defer file.close();
-        try file.chmod(0o755);
+        const file = try tmp.dir.openFile(std.Options.debug_io, "bin/fake-claude.sh", .{});
+        defer file.close(std.Options.debug_io);
+        try file.setPermissions(std.Options.debug_io, @enumFromInt(0o755));
     }
 
-    const root_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const root_path = try testingRealPath(testing.allocator, tmp.dir, ".");
     defer testing.allocator.free(root_path);
-    const home_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const home_path = try testingRealPath(testing.allocator, tmp.dir, ".");
     defer testing.allocator.free(home_path);
-    const skills_root = try tmp.dir.realpathAlloc(testing.allocator, "skills");
+    const skills_root = try testingRealPath(testing.allocator, tmp.dir, "skills");
     defer testing.allocator.free(skills_root);
-    const agent_bin = try tmp.dir.realpathAlloc(testing.allocator, "bin/fake-claude.sh");
+    const agent_bin = try testingRealPath(testing.allocator, tmp.dir, "bin/fake-claude.sh");
     defer testing.allocator.free(agent_bin);
 
     var result = try dispatchSkill(testing.allocator, .{
@@ -454,7 +520,12 @@ test "dispatchSkill writes prompt/report/meta and reuses sweep" {
     });
     defer result.deinit(testing.allocator);
 
-    const prompt = try std.fs.cwd().readFileAlloc(testing.allocator, result.prompt_path, 8 * 1024);
+    const prompt = try std.Io.Dir.cwd().readFileAlloc(
+        std.Options.debug_io,
+        result.prompt_path,
+        testing.allocator,
+        .limited(8 * 1024),
+    );
     defer testing.allocator.free(prompt);
     try testing.expect(std.mem.startsWith(u8, prompt, "/vc-workflow"));
 
@@ -465,7 +536,12 @@ test "dispatchSkill writes prompt/report/meta and reuses sweep" {
     try testing.expectEqualStrings("vc-workflow", meta.skill_name);
     try testing.expectEqualStrings("workflow", meta.skill_code);
 
-    const report = try std.fs.cwd().readFileAlloc(testing.allocator, result.report_path, 8 * 1024);
+    const report = try std.Io.Dir.cwd().readFileAlloc(
+        std.Options.debug_io,
+        result.report_path,
+        testing.allocator,
+        .limited(8 * 1024),
+    );
     defer testing.allocator.free(report);
     try testing.expect(std.mem.indexOf(u8, report, "vc-init ok") != null);
 }
@@ -474,8 +550,8 @@ test "resolveSkill normalizes vc-prefixed aliases" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills/foundations/vc-aicx");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(std.Options.debug_io, "skills/foundations/vc-aicx");
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "skills/foundations/vc-aicx/SKILL.md",
         .data =
         \\---
@@ -486,7 +562,7 @@ test "resolveSkill normalizes vc-prefixed aliases" {
         ,
     });
 
-    const skills_root = try tmp.dir.realpathAlloc(std.testing.allocator, "skills");
+    const skills_root = try testingRealPath(std.testing.allocator, tmp.dir, "skills");
     defer std.testing.allocator.free(skills_root);
 
     var resolved = try resolveSkill(std.testing.allocator, .{
@@ -508,8 +584,8 @@ test "dispatchSkill ghosts run when prompt staging fails before launch" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills/vc-init");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(std.Options.debug_io, "skills/vc-init");
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "skills/vc-init/SKILL.md",
         .data =
         \\---
@@ -520,11 +596,11 @@ test "dispatchSkill ghosts run when prompt staging fails before launch" {
         ,
     });
 
-    const root_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const root_path = try testingRealPath(testing.allocator, tmp.dir, ".");
     defer testing.allocator.free(root_path);
-    const home_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const home_path = try testingRealPath(testing.allocator, tmp.dir, ".");
     defer testing.allocator.free(home_path);
-    const skills_root = try tmp.dir.realpathAlloc(testing.allocator, "skills");
+    const skills_root = try testingRealPath(testing.allocator, tmp.dir, "skills");
     defer testing.allocator.free(skills_root);
 
     try testing.expectError(error.FileNotFound, dispatchSkill(testing.allocator, .{
@@ -560,7 +636,7 @@ test "dispatchSkill ghosts run when prompt staging fails before launch" {
     try testing.expectEqual(@as(?std.posix.pid_t, null), meta.launcher_pid);
     try testing.expectEqualStrings("prompt staging failed before launch", meta.ghost_reason.?);
     try testing.expect(!std.mem.eql(u8, meta.lock_path, ""));
-    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(meta.lock_path, .{}));
+    try testing.expectError(error.FileNotFound, std.Io.Dir.accessAbsolute(std.Options.debug_io, meta.lock_path, .{}));
 }
 
 test "dispatchSkill ghosts run when launcher startup fails after meta creation" {
@@ -569,8 +645,8 @@ test "dispatchSkill ghosts run when launcher startup fails after meta creation" 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills/vc-init");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(std.Options.debug_io, "skills/vc-init");
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "skills/vc-init/SKILL.md",
         .data =
         \\---
@@ -581,11 +657,11 @@ test "dispatchSkill ghosts run when launcher startup fails after meta creation" 
         ,
     });
 
-    const root_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const root_path = try testingRealPath(testing.allocator, tmp.dir, ".");
     defer testing.allocator.free(root_path);
-    const home_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const home_path = try testingRealPath(testing.allocator, tmp.dir, ".");
     defer testing.allocator.free(home_path);
-    const skills_root = try tmp.dir.realpathAlloc(testing.allocator, "skills");
+    const skills_root = try testingRealPath(testing.allocator, tmp.dir, "skills");
     defer testing.allocator.free(skills_root);
 
     try testing.expectError(error.FileNotFound, dispatchSkill(testing.allocator, .{
@@ -625,5 +701,5 @@ test "dispatchSkill ghosts run when launcher startup fails after meta creation" 
             std.mem.eql(u8, meta.ghost_reason.?, "launcher output collection failed during run") or
             std.mem.eql(u8, meta.ghost_reason.?, "launcher wait failed during run"),
     );
-    try testing.expectError(error.FileNotFound, std.fs.accessAbsolute(meta.lock_path, .{}));
+    try testing.expectError(error.FileNotFound, std.Io.Dir.accessAbsolute(std.Options.debug_io, meta.lock_path, .{}));
 }

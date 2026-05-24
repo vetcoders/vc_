@@ -26,7 +26,7 @@ pub fn main(init: std.process.Init) !void {
         const stdout = &stdout_writer.interface;
         defer stdout.flush() catch {};
 
-        std.process.exit(try vc_dispatch.runSkill(alloc, stdout, skill_name, argv[1..]));
+        std.process.exit(try vc_dispatch.runSkill(alloc, init.io, stdout, skill_name, argv[1..]));
     }
 
     if (argv.len > 1) {
@@ -51,7 +51,20 @@ pub fn main(init: std.process.Init) !void {
             const stdout = &stdout_writer.interface;
             defer stdout.flush() catch {};
 
-            std.process.exit(try vc_dispatch.runInit(alloc, stdout, argv[2..]));
+            std.process.exit(try vc_dispatch.runInit(alloc, init.io, stdout, argv[2..]));
+        }
+        if (std.mem.eql(u8, command, "-e")) {
+            var stdout_buffer: [4096]u8 = undefined;
+            var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &stdout_buffer);
+            const stdout = &stdout_writer.interface;
+            defer stdout.flush() catch {};
+
+            if (argv.len < 3) {
+                try stdout.writeAll("error: -e expects a vibecrafted command string\n");
+                std.process.exit(1);
+            }
+
+            std.process.exit(try runEvalCommand(alloc, init.io, stdout, argv[2]));
         }
         if (std.mem.eql(u8, command, "--help") or
             std.mem.eql(u8, command, "-h") or
@@ -66,7 +79,7 @@ pub fn main(init: std.process.Init) !void {
         const stdout = &stdout_writer.interface;
         defer stdout.flush() catch {};
 
-        std.process.exit(try vc_dispatch.runSkill(alloc, stdout, command, argv[2..]));
+        std.process.exit(try vc_dispatch.runSkill(alloc, init.io, stdout, command, argv[2..]));
     }
 
     const ensured_config_path = try vc_install.ensureDefaultConfig(alloc);
@@ -94,7 +107,7 @@ fn printHelp(io: std.Io) !void {
     var stdout_writer = std.Io.File.stdout().writerStreaming(io, &buffer);
     const stdout = &stdout_writer.interface;
     try stdout.writeAll(
-        \\Usage: vc_ [doctor|status|skills|<skill>] [--json|--md]
+        \\Usage: vc_ [doctor|status|skills|-e <command>|<skill>] [--json|--md]
         \\
         \\Without a subcommand, vc_ (VC Underscore) launches the runtime.
         \\`doctor` validates the install surface.
@@ -109,6 +122,38 @@ fn printHelp(io: std.Io) !void {
         \\
     );
     try stdout.flush();
+}
+
+fn runEvalCommand(alloc: std.mem.Allocator, io: std.Io, writer: anytype, command: []const u8) !u8 {
+    var tokens: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer tokens.deinit(alloc);
+
+    var parts = std.mem.tokenizeScalar(u8, command, ' ');
+    while (parts.next()) |part| try tokens.append(alloc, part);
+
+    if (tokens.items.len < 3 or !std.mem.eql(u8, tokens.items[0], "vibecrafted")) {
+        try writer.writeAll("error: -e supports: vibecrafted <skill> <claude|codex|gemini> [args]\n");
+        return 1;
+    }
+
+    const skill_name = tokens.items[1];
+    const tail = tokens.items[2..];
+    const has_runtime = for (tail) |arg| {
+        if (std.mem.eql(u8, arg, "--runtime")) break true;
+    } else false;
+
+    var args = try alloc.alloc([]const u8, tail.len + if (has_runtime) @as(usize, 0) else 2);
+    defer alloc.free(args);
+
+    @memcpy(args[0..tail.len], tail);
+    var len = tail.len;
+    if (!has_runtime) {
+        args[len] = "--runtime";
+        args[len + 1] = "terminal";
+        len += 2;
+    }
+
+    return vc_dispatch.runSkill(alloc, io, writer, skill_name, args[0..len]);
 }
 
 fn aliasSkillName(invoked_as: []const u8) ?[]const u8 {

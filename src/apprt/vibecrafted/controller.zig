@@ -100,7 +100,7 @@ pub const WorkspaceController = struct {
     };
 
     allocator: Allocator,
-    tabs: std.ArrayListUnmanaged(*TabController) = .{},
+    tabs: std.ArrayListUnmanaged(*TabController) = .empty,
     active_tab_id: ?TabId = null,
     next_tab_id: TabId = 1,
 

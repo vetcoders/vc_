@@ -218,8 +218,10 @@ fn validateAndAdoptRoot(alloc: Allocator, adopted: []u8) LoadError![]const u8 {
     return realpathAlloc(alloc, adopted);
 }
 
-fn realpathAlloc(alloc: Allocator, path: []const u8) ![:0]u8 {
-    return std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, path, alloc);
+fn realpathAlloc(alloc: Allocator, path: []const u8) ![]u8 {
+    const zpath = try std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, path, alloc);
+    defer alloc.free(zpath);
+    return alloc.dupe(u8, zpath);
 }
 
 fn getenvOwned(alloc: Allocator, name: [*:0]const u8) !?[]u8 {
@@ -400,6 +402,12 @@ fn stripQuotes(value: []const u8) []const u8 {
     return value;
 }
 
+fn testingRealPath(alloc: Allocator, dir: std.Io.Dir, sub_path: []const u8) ![]u8 {
+    const zpath = try dir.realPathFileAlloc(std.Options.debug_io, sub_path, alloc);
+    defer alloc.free(zpath);
+    return alloc.dupe(u8, zpath);
+}
+
 test "parse frontmatter extracts folded description and body" {
     const sample =
         \\---
@@ -431,9 +439,9 @@ test "load catalog scans skill directories and sorts by name" {
     var tmp = testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills/zeta");
-    try tmp.dir.makePath("skills/alpha");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(std.Options.debug_io, "skills/zeta");
+    try tmp.dir.createDirPath(std.Options.debug_io, "skills/alpha");
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "skills/zeta/SKILL.md",
         .data =
         \\---
@@ -444,7 +452,7 @@ test "load catalog scans skill directories and sorts by name" {
         \\# Zeta
         ,
     });
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "skills/alpha/SKILL.md",
         .data =
         \\---
@@ -455,7 +463,7 @@ test "load catalog scans skill directories and sorts by name" {
         ,
     });
 
-    const skills_root = try tmp.dir.realpathAlloc(testing.allocator, "skills");
+    const skills_root = try testingRealPath(testing.allocator, tmp.dir, "skills");
     defer testing.allocator.free(skills_root);
 
     var catalog = try loadCatalog(testing.allocator, .{ .skills_dir_override = skills_root });
@@ -474,8 +482,8 @@ test "load catalog scans nested skills and resolves folder aliases" {
     var tmp = testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("skills/foundations/vc-aicx");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(std.Options.debug_io, "skills/foundations/vc-aicx");
+    try tmp.dir.writeFile(std.Options.debug_io, .{
         .sub_path = "skills/foundations/vc-aicx/SKILL.md",
         .data =
         \\---
@@ -487,7 +495,7 @@ test "load catalog scans nested skills and resolves folder aliases" {
         ,
     });
 
-    const skills_root = try tmp.dir.realpathAlloc(testing.allocator, "skills");
+    const skills_root = try testingRealPath(testing.allocator, tmp.dir, "skills");
     defer testing.allocator.free(skills_root);
 
     var catalog = try loadCatalog(testing.allocator, .{ .skills_dir_override = skills_root });

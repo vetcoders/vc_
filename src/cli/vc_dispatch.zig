@@ -5,6 +5,7 @@ const dispatch_runtime = @import("../apprt/vibecrafted/runtime/dispatch.zig");
 
 pub fn runSkill(
     alloc: Allocator,
+    io: std.Io,
     writer: anytype,
     skill_name: []const u8,
     argv: []const []const u8,
@@ -73,9 +74,9 @@ pub fn runSkill(
     }
 
     const resolved_root = if (root) |value|
-        try std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, value, alloc)
+        try realpathAlloc(alloc, value)
     else
-        try std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, ".", alloc);
+        try realpathAlloc(alloc, ".");
     defer alloc.free(resolved_root);
 
     var result = dispatch_runtime.dispatchSkill(alloc, .{
@@ -85,6 +86,7 @@ pub fn runSkill(
         .runtime = runtime,
         .prompt_text = prompt_text,
         .prompt_file = prompt_file,
+        .io = io,
     }) catch |err| {
         switch (err) {
             error.PromptConflict => try writer.writeAll("error: use at most one input source: --prompt or --file\n"),
@@ -110,10 +112,17 @@ pub fn runSkill(
 
 pub fn runInit(
     alloc: Allocator,
+    io: std.Io,
     writer: anytype,
     argv: []const []const u8,
 ) !u8 {
-    return runSkill(alloc, writer, "init", argv);
+    return runSkill(alloc, io, writer, "init", argv);
+}
+
+fn realpathAlloc(alloc: Allocator, path: []const u8) ![]u8 {
+    const zpath = try std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, path, alloc);
+    defer alloc.free(zpath);
+    return alloc.dupe(u8, zpath);
 }
 
 fn parseAgent(value: []const u8) ?dispatch_runtime.Agent {

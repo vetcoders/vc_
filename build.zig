@@ -524,6 +524,27 @@ pub fn build(b: *std.Build) !void {
         test_step.dependOn(&panels_test_run.step);
         test_panels_step.dependOn(&panels_test_run.step);
 
+        const apprt_vibecrafted_test_exe = b.addTest(.{
+            .name = "apprt-vibecrafted-test",
+            .filters = test_filters,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tests/apprt_vibecrafted_test.zig"),
+                .target = config.baselineTarget(b),
+                .optimize = .Debug,
+                .strip = false,
+                .omit_frame_pointer = false,
+                .unwind_tables = .sync,
+            }),
+            .use_llvm = true,
+        });
+        apprt_vibecrafted_test_exe.root_module.addImport("apprt_dispatch", b.createModule(.{
+            .root_source_file = b.path("src/apprt/vibecrafted/runtime/dispatch.zig"),
+            .target = config.baselineTarget(b),
+            .optimize = .Debug,
+        }));
+        const apprt_vibecrafted_test_run = b.addRunArtifact(apprt_vibecrafted_test_exe);
+        test_step.dependOn(&apprt_vibecrafted_test_run.step);
+
         // Normal tests always test our libghostty modules
         //test_step.dependOn(test_lib_vt_step);
 
