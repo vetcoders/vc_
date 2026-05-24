@@ -77,6 +77,7 @@ pub const CreateRunOptions = struct {
     mode: []const u8,
     root: []const u8,
     skill_path: ?[]const u8 = null,
+    session_id: ?[]const u8 = null,
 };
 
 pub const DiskPayload = struct {
@@ -87,6 +88,7 @@ pub const DiskPayload = struct {
     mode: []const u8,
     root: []const u8,
     skill_path: ?[]const u8 = null,
+    session_id: ?[]const u8 = null,
     meta_path: []const u8,
     report_path: []const u8,
     transcript_path: []const u8,
@@ -110,6 +112,7 @@ pub const RunMeta = struct {
     mode: []const u8,
     root: []const u8,
     skill_path: ?[]const u8,
+    session_id: ?[]const u8 = null,
     meta_path: []const u8,
     report_path: []const u8,
     transcript_path: []const u8,
@@ -131,6 +134,7 @@ pub const RunMeta = struct {
         self.allocator.free(self.mode);
         self.allocator.free(self.root);
         if (self.skill_path) |value| self.allocator.free(value);
+        if (self.session_id) |value| self.allocator.free(value);
         self.allocator.free(self.meta_path);
         self.allocator.free(self.report_path);
         self.allocator.free(self.transcript_path);
@@ -149,6 +153,7 @@ pub const RunMeta = struct {
             .mode = self.mode,
             .root = self.root,
             .skill_path = self.skill_path,
+            .session_id = self.session_id,
             .meta_path = self.meta_path,
             .report_path = self.report_path,
             .transcript_path = self.transcript_path,
@@ -176,6 +181,13 @@ pub const RunMeta = struct {
     pub fn markRunning(self: *RunMeta, pid: std.posix.pid_t, now_seconds: i64) !void {
         self.launcher_pid = pid;
         self.status = .running;
+        self.updated_at = now_seconds;
+        try self.save();
+    }
+
+    pub fn setSessionId(self: *RunMeta, session_id: []const u8, now_seconds: i64) !void {
+        if (self.session_id) |value| self.allocator.free(value);
+        self.session_id = try self.allocator.dupe(u8, session_id);
         self.updated_at = now_seconds;
         try self.save();
     }
@@ -214,7 +226,7 @@ pub const SweepResult = struct {
 
 pub fn resolveLayout(alloc: Allocator, opts: LayoutOptions) !Layout {
     const now_seconds = opts.now_seconds orelse std.Io.Timestamp.now(std.Options.debug_io, .real).toSeconds();
-    const root = try std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, opts.root, alloc);
+    const root = try realpathAlloc(alloc, opts.root);
     errdefer alloc.free(root);
 
     const project_slug = if (opts.project_slug_override) |value|
@@ -341,6 +353,7 @@ pub fn createRunMeta(alloc: Allocator, opts: CreateRunOptions) !RunMeta {
         .mode = try alloc.dupe(u8, opts.mode),
         .root = try alloc.dupe(u8, opts.root),
         .skill_path = if (opts.skill_path) |value| try alloc.dupe(u8, value) else null,
+        .session_id = if (opts.session_id) |value| try alloc.dupe(u8, value) else null,
         .meta_path = paths.meta_path,
         .report_path = paths.report_path,
         .transcript_path = paths.transcript_path,
@@ -381,6 +394,7 @@ pub fn loadMetaAbsolute(alloc: Allocator, meta_path: []const u8) !RunMeta {
         .mode = try alloc.dupe(u8, payload.mode),
         .root = try alloc.dupe(u8, payload.root),
         .skill_path = if (payload.skill_path) |value| try alloc.dupe(u8, value) else null,
+        .session_id = if (payload.session_id) |value| try alloc.dupe(u8, value) else null,
         .meta_path = try alloc.dupe(u8, payload.meta_path),
         .report_path = try alloc.dupe(u8, payload.report_path),
         .transcript_path = try alloc.dupe(u8, payload.transcript_path),
@@ -525,8 +539,10 @@ fn ensureRealpathDir(alloc: Allocator, path: []const u8) ![]const u8 {
     };
 }
 
-fn realpathAlloc(alloc: Allocator, path: []const u8) ![:0]u8 {
-    return std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, path, alloc);
+fn realpathAlloc(alloc: Allocator, path: []const u8) ![]u8 {
+    const zpath = try std.Io.Dir.cwd().realPathFileAlloc(std.Options.debug_io, path, alloc);
+    defer alloc.free(zpath);
+    return alloc.dupe(u8, zpath);
 }
 
 fn getenvOwned(alloc: Allocator, name: [*:0]const u8) !?[]u8 {
@@ -584,7 +600,7 @@ fn formatDayStamp(alloc: Allocator, now_seconds: i64) ![]const u8 {
     return std.fmt.allocPrint(
         alloc,
         "{d}_{d:0>2}{d:0>2}",
-        .{ year_day.year, month_day.month.numeric(), month_day.day_index },
+        .{ year_day.year, month_day.month.numeric(), month_day.day_index + 1 },
     );
 }
 
@@ -621,6 +637,12 @@ fn formatFileStamp(alloc: Allocator, now_seconds: i64) ![]const u8 {
     return std.fmt.allocPrint(alloc, "{s}_{s}", .{ compact_day[0..write_index], clock_stamp[0..4] });
 }
 
+fn testingRealPath(alloc: Allocator, dir: std.Io.Dir, sub_path: []const u8) ![]u8 {
+    const zpath = try dir.realPathFileAlloc(std.Options.debug_io, sub_path, alloc);
+    defer alloc.free(zpath);
+    return alloc.dupe(u8, zpath);
+}
+
 test "generateRunId keeps the legacy prefix-hhmmss-pid contract" {
     const run_id = try generateRunId(std.testing.allocator, "init", 1710883557);
     defer std.testing.allocator.free(run_id);
@@ -637,10 +659,10 @@ test "createRunMeta writes meta and lock files" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const root_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const root_path = try testingRealPath(testing.allocator, tmp.dir, ".");
     defer testing.allocator.free(root_path);
 
-    const home_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const home_path = try testingRealPath(testing.allocator, tmp.dir, ".");
     defer testing.allocator.free(home_path);
 
     var layout = try resolveLayout(testing.allocator, .{
@@ -682,10 +704,10 @@ test "sweepDeadRuns flips stale launchers to ghost and releases locks" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const root_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const root_path = try testingRealPath(testing.allocator, tmp.dir, ".");
     defer testing.allocator.free(root_path);
 
-    const home_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const home_path = try testingRealPath(testing.allocator, tmp.dir, ".");
     defer testing.allocator.free(home_path);
 
     var layout = try resolveLayout(testing.allocator, .{
@@ -731,10 +753,10 @@ test "sweepDeadRuns reaps live runs that never recorded launcher_pid" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const root_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const root_path = try testingRealPath(testing.allocator, tmp.dir, ".");
     defer testing.allocator.free(root_path);
 
-    const home_path = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    const home_path = try testingRealPath(testing.allocator, tmp.dir, ".");
     defer testing.allocator.free(home_path);
 
     var layout = try resolveLayout(testing.allocator, .{
