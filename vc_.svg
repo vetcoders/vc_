@@ -2,11 +2,8 @@
 <!-- vc_ brand mark.
      Composition: italic mathematical-script "𝓿𝓬" in off-white +
      geometric cursor-rect in gold acting as the trailing underscore.
-     The rect is a third character of the wordmark, NOT an ornament.
-     Position is glued to 𝓬 — nudge x on the rect if optical spacing
-     drifts on a particular renderer.
      Final production export should convert 𝓿𝓬 to <path> elements
-     (Inkscape "Object to Path" or fonttools), this file keeps the
+     ("Object to Path"), this file keeps the
      glyphs as text so the source stays editable. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" text-rendering="geometricPrecision" shape-rendering="geometricPrecision">
   <rect fill="#0e0e0e" width="1000" height="1000"/>
@@ -25,19 +22,21 @@
       style="white-space:pre"
     >𝓿𝓬</text>
 
-    <!-- Cursor-underscore. Lives in the same transform group as 𝓿𝓬 so
-         it scales identically with the wordmark. x sits a hair after
-         the optical end of 𝓬 (overlap by ~10 user units so it reads
-         as one glyph, not as an ornament). y is just below the
-         baseline of 𝓬. Height/width are tuned for a chunky terminal
-         cursor, not a thin typographic underscore. rx gives a touch
-         of pixel-rounding so it still feels rendered, not stamped. -->
-    <rect
+    <!--     The cursor-underscore, residing in the same transform group as 𝓿𝓬,
+	     scales uniformly with the wordmark. Positioned slightly after the
+             optical end of 𝓬, it overlaps by approximately 10 user units,
+             rendering it as a single glyph rather than an ornament.
+             The y-coordinate is precisely below the baseline of 𝓬. The height
+             and width are meticulously adjusted to emulate the appearance of
+             a typographic underscore, preserving the crafted aesthetic. -->
+
+<rect
       fill="#c99a3b"
-      x="828"
+      transform="translate(129.7207, 44.5754)"
+      x="876"
       y="708"
-      width="206"
-      height="46"
+      width="301"
+      height="48.5"
       rx="6"
       ry="6"
     />
