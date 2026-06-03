@@ -56,7 +56,7 @@
 		<string>app</string>
 	</dict>
 	<key>MDItemKeywords</key>
-	<string>Vibecrafted</string>
+	<string>vc_, Vc underscore, Vibecrafted, Agentic Terminal</string>
 	<key>NSAppleScriptEnabled</key>
 	<true/>
 	<key>NSHighResolutionCapable</key>
@@ -114,7 +114,7 @@
 			<key>UTTypeIdentifier</key>
 			<string>com.vibecrafted.vc-board.surfaceId</string>
 			<key>UTTypeDescription</key>
-			<string>vc-board Surface Identifier</string>
+			<string>vc_ Surface Identifier</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.data</string>
