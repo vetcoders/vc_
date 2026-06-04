@@ -1,6 +1,11 @@
 init:
 	@echo You probably want to run "zig build" instead.
-.PHONY: init
+.PHONY: init help
+
+HELP_C_CYAN   := \033[36m
+HELP_C_GREEN  := \033[32m
+HELP_C_YELLOW := \033[33m
+HELP_C_RESET  := \033[0m
 
 # glad updates the GLAD loader. To use this, place the generated glad.zip
 # in this directory next to the Makefile, remove vendor/glad and run this target.
@@ -62,3 +67,16 @@ wizard:
 gui-install:
 	@echo "Legacy GUI installer is retired. Use \`make dmg\` or open the packaged vc_.app bundle."
 .PHONY: gui-install
+
+help:
+	@printf "\n$(HELP_C_CYAN)vc_$(HELP_C_RESET) - Zig runtime packaging\n\n"
+	@printf "  $(HELP_C_YELLOW)BUILD$(HELP_C_RESET)\n"
+	@printf "    $(HELP_C_GREEN)%-14s$(HELP_C_RESET) %s\n" "init" "Point new callers at zig build"
+	@printf "    $(HELP_C_GREEN)%-14s$(HELP_C_RESET) %s\n" "vibecrafted" "Build the vc_ runtime"
+	@printf "    $(HELP_C_GREEN)%-14s$(HELP_C_RESET) %s\n" "vc" "Alias for vibecrafted runtime build"
+	@printf "    $(HELP_C_GREEN)%-14s$(HELP_C_RESET) %s\n" "clean" "Remove Zig/macOS build artifacts"
+	@printf "\n  $(HELP_C_YELLOW)PACKAGE$(HELP_C_RESET)\n"
+	@printf "    $(HELP_C_GREEN)%-14s$(HELP_C_RESET) %s\n" "bundle-linux" "Build Linux bundle"
+	@printf "    $(HELP_C_GREEN)%-14s$(HELP_C_RESET) %s\n" "bundle-macos" "Build macOS bundle"
+	@printf "    $(HELP_C_GREEN)%-14s$(HELP_C_RESET) %s\n" "tarball" "Build Linux tarball"
+	@printf "    $(HELP_C_GREEN)%-14s$(HELP_C_RESET) %s\n" "dmg" "Build macOS DMG"
