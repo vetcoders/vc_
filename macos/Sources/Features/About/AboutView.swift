@@ -1,15 +1,12 @@
 import SwiftUI
 
 struct AboutView: View {
-    @Environment(\.openURL) var openURL
-
-    private let githubURL = URL(string: "https://github.com/ghostty-org/ghostty")
-    private let docsURL = URL(string: "https://ghostty.org/docs")
-
     /// Read the commit from the bundle.
     private var build: String? { Bundle.main.infoDictionary?["CFBundleVersion"] as? String }
     private var commit: String? { Bundle.main.infoDictionary?["GhosttyCommit"] as? String }
     private var version: String? { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String }
+    private let brandInk = Color(red: 0.96, green: 0.94, blue: 0.89)
+    private let brandPanel = Color(red: 0.055, green: 0.055, blue: 0.055)
 
     private enum VersionConfig {
         case stable(version: String)
@@ -32,9 +29,8 @@ struct AboutView: View {
 
         var url: URL? {
             switch self {
-            case .stable(let version):
-                let slug = version.replacingOccurrences(of: ".", with: "-")
-                return URL(string: "https://ghostty.org/docs/install/release-notes/\(slug)")
+            case .stable:
+                return nil
             default:
                 return nil
             }
@@ -78,17 +74,17 @@ struct AboutView: View {
         VStack(alignment: .center) {
             CyclingIconView()
 
-            VStack(alignment: .center, spacing: 32) {
+            VStack(alignment: .center, spacing: 28) {
                 VStack(alignment: .center, spacing: 8) {
-                    Text("Ghostty")
+                    Text("vc_")
                         .bold()
                         .font(.title)
-                    Text("Fast, native, feature-rich terminal \nemulator pushing modern features.")
+                        .foregroundStyle(brandInk)
+                    Text("vc_ - Vc underscore - Agentic Terminal.")
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                         .font(.caption)
-                        .tint(.secondary)
-                        .opacity(0.8)
+                        .foregroundStyle(brandInk.opacity(0.74))
                 }
                 .textSelection(.enabled)
 
@@ -106,32 +102,17 @@ struct AboutView: View {
                     if let build {
                         PropertyRow(label: "Build", text: build)
                     }
-                    if let commit, commit != "",
-                       let url = githubURL?.appendingPathComponent("/commits/\(commit)") {
-                        PropertyRow(label: "Commit", text: commit, url: url)
+                    if let commit, commit != "" {
+                        PropertyRow(label: "Commit", text: commit)
                     }
                 }
                 .frame(maxWidth: .infinity)
-
-                HStack(spacing: 8) {
-                    if let url = docsURL {
-                        Button("Docs") {
-                            openURL(url)
-                        }
-                    }
-                    if let url = githubURL {
-                        Button("GitHub") {
-                            openURL(url)
-                        }
-                    }
-                }
 
                 if let copy = self.copyright {
                     Text(copy)
                         .font(.caption)
                         .textSelection(.enabled)
-                        .tint(.secondary)
-                        .opacity(0.8)
+                        .foregroundStyle(brandInk.opacity(0.62))
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity)
                 }
@@ -142,7 +123,12 @@ struct AboutView: View {
         .padding(32)
         .frame(minWidth: 256)
         #if os(macOS)
-        .background(VisualEffectBackground(material: .underWindowBackground).ignoresSafeArea())
+        .background(
+            ZStack {
+                VisualEffectBackground(material: .underWindowBackground).ignoresSafeArea()
+                brandPanel.ignoresSafeArea().opacity(0.84)
+            }
+        )
         #endif
     }
 
@@ -161,8 +147,7 @@ struct AboutView: View {
             Text(text)
                 .frame(width: 125, alignment: .leading)
                 .padding(.leading, 2)
-                .tint(.secondary)
-                .opacity(0.8)
+                .foregroundStyle(Color(red: 0.96, green: 0.94, blue: 0.89).opacity(0.72))
                 .monospaced()
         }
 
@@ -171,6 +156,7 @@ struct AboutView: View {
                 Text(label)
                     .frame(width: 126, alignment: .trailing)
                     .padding(.trailing, 2)
+                    .foregroundStyle(Color(red: 0.79, green: 0.60, blue: 0.23))
                 if let url {
                     Link(destination: url) {
                         textView

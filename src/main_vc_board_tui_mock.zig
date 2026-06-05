@@ -52,12 +52,13 @@ pub fn main() !void {
     try t.controls.setActions(&sample_actions);
 
     var stdout_buf: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
+    const stdout_file = std.Io.File.stdout();
+    var stdout_writer = stdout_file.writerStreaming(std.Options.debug_io, &stdout_buf);
     const stdout = &stdout_writer.interface;
 
-    const stdin = std.fs.File.stdin();
+    const stdin = std.Io.File.stdin();
 
-    if (!stdin.isTty() or !std.fs.File.stdout().isTty()) {
+    if (!try stdin.isTty(std.Options.debug_io) or !try stdout_file.isTty(std.Options.debug_io)) {
         try renderAllTabsOnce(stdout, &t);
         try stdout.flush();
         return;
@@ -76,7 +77,7 @@ pub fn main() !void {
 
     try stdout.writeAll("\x1b[?25l");
     defer {
-        std.fs.File.stdout().writeAll("\x1b[?25h\x1b[0m\n") catch {};
+        stdout.writeAll("\x1b[?25h\x1b[0m\n") catch {};
     }
 
     var key_buf: [8]u8 = undefined;
@@ -103,7 +104,7 @@ pub fn main() !void {
     }
 }
 
-fn renderAllTabsOnce(w: *std.io.Writer, t: *tui.Tui) !void {
+fn renderAllTabsOnce(w: *std.Io.Writer, t: *tui.Tui) !void {
     for ([_]tui.Tab{ .monitor, .dispatch, .controls }) |kind| {
         t.setActiveTab(kind);
         try renderActiveTab(w, t);
@@ -111,7 +112,7 @@ fn renderAllTabsOnce(w: *std.io.Writer, t: *tui.Tui) !void {
     }
 }
 
-fn renderActiveTab(w: *std.io.Writer, t: *tui.Tui) !void {
+fn renderActiveTab(w: *std.Io.Writer, t: *tui.Tui) !void {
     try w.writeAll("\x1b[2J\x1b[H");
     try w.writeAll("vc-board-tui-mock  T3 P1 — state-only presenter (Vibecrafted.)\n\n");
     try renderTabBar(w, t.activeTab());
@@ -124,7 +125,7 @@ fn renderActiveTab(w: *std.io.Writer, t: *tui.Tui) !void {
     try w.writeAll("\n\x1b[2m  Tab=next  Shift+Tab=prev  q=quit  \x1b[0m\n");
 }
 
-fn renderTabBar(w: *std.io.Writer, active: tui.Tab) !void {
+fn renderTabBar(w: *std.Io.Writer, active: tui.Tab) !void {
     for ([_]tui.Tab{ .monitor, .dispatch, .controls }) |kind| {
         if (kind == active) {
             try w.print("\x1b[7m  {s}  \x1b[0m ", .{kind.label()});
@@ -135,7 +136,7 @@ fn renderTabBar(w: *std.io.Writer, active: tui.Tab) !void {
     try w.writeAll("\n");
 }
 
-fn renderMonitor(w: *std.io.Writer, state: *const monitor_mod.MonitorState) !void {
+fn renderMonitor(w: *std.Io.Writer, state: *const monitor_mod.MonitorState) !void {
     const counts = state.statusCounts();
     try w.print(" Runs: total={d} live={d} (active={d} stalled={d} completed={d})\n\n", .{
         counts[7],
@@ -153,7 +154,7 @@ fn renderMonitor(w: *std.io.Writer, state: *const monitor_mod.MonitorState) !voi
     if (state.runs.items.len == 0) try w.writeAll(" (no runs in mock data)\n");
 }
 
-fn renderDispatch(w: *std.io.Writer, state: *const dispatch_mod.DispatchState) !void {
+fn renderDispatch(w: *std.Io.Writer, state: *const dispatch_mod.DispatchState) !void {
     try w.print(" Launch form  (focus={s})\n\n", .{@tagName(state.focus)});
     try fieldLine(w, "Kind", state.focus == .kind, state.kind.humanTitle());
     try fieldLine(w, "Agent", state.focus == .agent, state.agent.label());
@@ -165,12 +166,12 @@ fn renderDispatch(w: *std.io.Writer, state: *const dispatch_mod.DispatchState) !
     });
 }
 
-fn fieldLine(w: *std.io.Writer, label: []const u8, focused: bool, value: []const u8) !void {
+fn fieldLine(w: *std.Io.Writer, label: []const u8, focused: bool, value: []const u8) !void {
     const marker = if (focused) "▶" else " ";
     try w.print(" {s} {s:<8} {s}\n", .{ marker, label, value });
 }
 
-fn renderControls(w: *std.io.Writer, state: *const controls_mod.ControlsState) !void {
+fn renderControls(w: *std.Io.Writer, state: *const controls_mod.ControlsState) !void {
     try w.print(" Deep actions ({d})\n\n", .{state.actions.items.len});
     for (state.actions.items, 0..) |action, i| {
         const marker = if (i == state.selected) "▶" else " ";
